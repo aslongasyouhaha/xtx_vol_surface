@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 from pathlib import Path
@@ -13,7 +14,13 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
-TARGET_DTE = 74
+DEFAULT_DTE = 74
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run an expiry-level SANOS/XTX case diagnostic.")
+    parser.add_argument("--target-dte", type=int, default=DEFAULT_DTE, help="Nearest DTE to analyze. Defaults to 74 for the project case study.")
+    return parser.parse_args()
 ETAS = [0.0, 0.01, 0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.25, 0.35, 0.50, 0.75, 1.00]
 
 
@@ -38,6 +45,8 @@ def outside_errors(bid: np.ndarray, ask: np.ndarray, fit: np.ndarray) -> np.ndar
 
 
 def main() -> None:
+    args = parse_args()
+    target_dte = args.target_dte
     OUT.mkdir(exist_ok=True)
     env = execute_state()
     sanos_expiry_inputs = env["sanos_expiry_inputs"]
@@ -46,7 +55,7 @@ def main() -> None:
 
     target_exdate = min(
         (pd.Timestamp(x) for x in sanos_expiry_inputs),
-        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - TARGET_DTE),
+        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - target_dte),
     )
     base_item = sanos_expiry_inputs[target_exdate]
     quotes = base_item["quotes"].copy().sort_values("k").reset_index(drop=True)
@@ -96,7 +105,7 @@ def main() -> None:
         )
 
     sweep = pd.DataFrame(rows)
-    sweep.to_csv(OUT / "74d_eta_sweep_metrics.csv", index=False)
+    sweep.to_csv(OUT / "expiry_case_eta_sweep_metrics.csv", index=False)
 
     ok = sweep[sweep["success"]].copy()
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), dpi=150, sharex=True)
@@ -122,9 +131,9 @@ def main() -> None:
 
     for ax in axes.ravel():
         ax.grid(True, alpha=0.25)
-    fig.suptitle("74D Single-Expiry ETA Sweep")
+    fig.suptitle("Expiry Case Single-Expiry ETA Sweep")
     fig.tight_layout()
-    fig.savefig(OUT / "14_74d_eta_sweep_metrics.png")
+    fig.savefig(OUT / "14_expiry_case_eta_sweep_metrics.png")
     plt.close(fig)
 
     selected = [eta for eta in [0.0, 0.025, 0.05, 0.10, 0.25, 0.50, 1.00] if eta in fits]
@@ -137,19 +146,19 @@ def main() -> None:
     ax.scatter(q_sorted["k"], q_sorted["pure_mid"], s=18, color="#1f77b4", label="market mid", zorder=3)
     for eta in selected:
         ax.plot(q_sorted["k"], fits[eta][order], linewidth=1.7, label=f"eta={eta:g}")
-    ax.set_title("74D Pure Call Fit Under Different ETA")
+    ax.set_title("Expiry Case Pure Call Fit Under Different ETA")
     ax.set_xlabel("normalized strike k")
     ax.set_ylabel("pure call price")
     ax.grid(True, alpha=0.25)
     ax.legend(ncol=2)
     fig.tight_layout()
-    fig.savefig(OUT / "15_74d_eta_sweep_fit_curves.png")
+    fig.savefig(OUT / "15_expiry_case_eta_sweep_fit_curves.png")
     plt.close(fig)
 
     best_cov = ok.sort_values(["coverage", "mid_rmse"], ascending=[False, True]).iloc[0]
     best_rmse = ok.sort_values("mid_rmse").iloc[0]
     lines = [
-        "# 74D ETA Sweep",
+        "# Expiry Case ETA Sweep",
         "",
         f"- Target expiry: {target_exdate.date()}",
         f"- DTE: {base_item['dte']}",
@@ -171,8 +180,8 @@ def main() -> None:
             ]
         ].to_markdown(index=False),
     ]
-    (OUT / "74d_eta_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote 74D ETA sweep diagnostics to {OUT}")
+    (OUT / "expiry_case_eta_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote Expiry Case ETA sweep diagnostics to {OUT}")
 
 
 if __name__ == "__main__":

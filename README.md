@@ -86,6 +86,16 @@ Summarize the existing multi-day ETA study:
 python summarize_xtx_multi_day_eta_partial.py
 ```
 
+Run expiry-case forensics, defaulting to the 74D project example:
+
+```bash
+python generate_xtx_expiry_case_deep_diagnostics.py --target-dte 74
+python generate_xtx_expiry_case_shape_diagnostics.py --target-dte 74
+python generate_xtx_expiry_case_eta_sweep.py --target-dte 74
+python generate_xtx_expiry_case_anchor_eta_sweep.py --target-dte 74
+python generate_xtx_expiry_case_joint_candidate_sweep.py --target-dte 74
+```
+
 Run the full multi-day ETA sweep:
 
 ```bash
@@ -104,12 +114,12 @@ Core diagnostics:
 - `xtx_diagnostics/05_pure_call_surface.png`
 - `xtx_diagnostics/06_otm_iv_surface.png`
 
-74D case diagnostics:
+Expiry-case diagnostics, default example 74D:
 
-- `xtx_diagnostics/74d_deep_summary.md`
-- `xtx_diagnostics/74d_static_shape_summary.md`
-- `xtx_diagnostics/74d_joint_candidate_sweep_summary.md`
-- `xtx_diagnostics/18_74d_joint_candidate_sweep_metrics.png`
+- `xtx_diagnostics/expiry_case_deep_summary.md`
+- `xtx_diagnostics/expiry_case_static_shape_summary.md`
+- `xtx_diagnostics/expiry_case_joint_candidate_sweep_summary.md`
+- `xtx_diagnostics/18_expiry_case_joint_candidate_sweep_metrics.png`
 
 Automatic remediation:
 
@@ -174,7 +184,7 @@ This project adds:
 2. OTM call-equivalent quote construction.
 3. Single-expiry then joint-LP diagnostic workflow.
 4. Coverage/outside-error/calendar/q-roughness diagnostic suite.
-5. 74D forensic diagnostics.
+5. Generic expiry-case forensic diagnostics, using 74D as the default example.
 6. Multi-day ETA and anchor regime study.
 7. Automatic regime-based dense-anchor remediation.
 8. Wing-weighted QP stabilization prototype.

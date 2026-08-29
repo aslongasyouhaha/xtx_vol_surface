@@ -31,9 +31,9 @@ q density stability
 
 IV 图是交易员更熟悉的语言，但不是这个 LP 真正拟合的对象。
 
-## 74D 的意义
+## Expiry case 的意义
 
-2025-06-02 的 74D expiry 是这个项目里最有价值的 case。它一开始看起来像坏报价，因为 joint LP coverage 只有 0.10。
+2025-06-02 的 74D expiry 是这个项目里最有价值的默认示例。它一开始看起来像坏报价，因为 joint LP coverage 只有 0.10。
 
 但拆开以后发现：
 
@@ -79,7 +79,7 @@ anchor 越稀，ETA 可以稍大。
 1. 明确 quote filtering 和 OTM call-equivalent 口径。
 2. 建立 price-space 诊断，而不是只看 IV。
 3. 把 single-expiry 和 joint fit 拆开看。
-4. 对 74D 做逐层 forensic diagnostics。
+4. 做通用 expiry-case forensic diagnostics，74D 只是默认示例。
 5. 做多日 ETA/anchor regime study。
 6. 做自动 remediation：只修坏 expiry，不全局加密。
 7. 做 wing-weighted QP 稳定化，让 q 不要在翼部跳。

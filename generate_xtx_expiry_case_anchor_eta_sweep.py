@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 from pathlib import Path
@@ -13,7 +14,13 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
-TARGET_DTE = 74
+DEFAULT_DTE = 74
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run an expiry-level SANOS/XTX case diagnostic.")
+    parser.add_argument("--target-dte", type=int, default=DEFAULT_DTE, help="Nearest DTE to analyze. Defaults to 74 for the project case study.")
+    return parser.parse_args()
 ETAS = [0.0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.10, 0.15, 0.25]
 
 
@@ -53,6 +60,8 @@ def outside_errors(bid: np.ndarray, ask: np.ndarray, fit: np.ndarray) -> np.ndar
 
 
 def main() -> None:
+    args = parse_args()
+    target_dte = args.target_dte
     OUT.mkdir(exist_ok=True)
     env = execute_state()
     sanos_expiry_inputs = env["sanos_expiry_inputs"]
@@ -61,7 +70,7 @@ def main() -> None:
 
     target_exdate = min(
         (pd.Timestamp(x) for x in sanos_expiry_inputs),
-        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - TARGET_DTE),
+        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - target_dte),
     )
     base_item = sanos_expiry_inputs[target_exdate]
     grids = anchor_grids(base_item["market_k"])
@@ -103,7 +112,7 @@ def main() -> None:
             rows.append(row)
 
     result = pd.DataFrame(rows)
-    result.to_csv(OUT / "74d_anchor_eta_sweep_metrics.csv", index=False)
+    result.to_csv(OUT / "expiry_case_anchor_eta_sweep_metrics.csv", index=False)
     ok = result[result["success"]].copy()
     best = ok.sort_values(["coverage", "mid_rmse"], ascending=[False, True]).head(12)
 
@@ -126,9 +135,9 @@ def main() -> None:
     for ax in axes.ravel():
         ax.axvspan(0.01, 0.05, color="gray", alpha=0.08)
         ax.grid(True, alpha=0.25)
-    fig.suptitle("74D Single-Expiry Anchor Grid + ETA Sweep")
+    fig.suptitle("Expiry Case Single-Expiry Anchor Grid + ETA Sweep")
     fig.tight_layout()
-    fig.savefig(OUT / "16_74d_anchor_eta_sweep_metrics.png")
+    fig.savefig(OUT / "16_expiry_case_anchor_eta_sweep_metrics.png")
     plt.close(fig)
 
     quote_order = np.arange(len(base_item["market_k"]))
@@ -146,17 +155,17 @@ def main() -> None:
         fit = fit_store[key][order]
         label = f"{row['grid']}, eta={row['eta']:g}, cov={row['coverage']:.2f}"
         ax.plot(qsorted["k"], fit, linewidth=1.6, label=label)
-    ax.set_title("74D Best Single-Expiry Fits Across Anchor/ETA Sweep")
+    ax.set_title("Expiry Case Best Single-Expiry Fits Across Anchor/ETA Sweep")
     ax.set_xlabel("normalized strike k")
     ax.set_ylabel("pure call price")
     ax.grid(True, alpha=0.25)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(OUT / "17_74d_anchor_eta_best_fit_curves.png")
+    fig.savefig(OUT / "17_expiry_case_anchor_eta_best_fit_curves.png")
     plt.close(fig)
 
     lines = [
-        "# 74D Anchor + ETA Sweep",
+        "# Expiry Case Anchor + ETA Sweep",
         "",
         f"- Target expiry: {target_exdate.date()}",
         f"- DTE: {base_item['dte']}",
@@ -196,8 +205,8 @@ def main() -> None:
             ]
         ].sort_values(["coverage", "mid_rmse"], ascending=[False, True]).to_markdown(index=False),
     ]
-    (OUT / "74d_anchor_eta_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote 74D anchor+ETA sweep diagnostics to {OUT}")
+    (OUT / "expiry_case_anchor_eta_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote Expiry Case anchor+ETA sweep diagnostics to {OUT}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,13 @@ from scipy import sparse as sp
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
-TARGET_DTE = 74
+DEFAULT_DTE = 74
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run an expiry-level SANOS/XTX case diagnostic.")
+    parser.add_argument("--target-dte", type=int, default=DEFAULT_DTE, help="Nearest DTE to analyze. Defaults to 74 for the project case study.")
+    return parser.parse_args()
 ETAS = [0.01, 0.05]
 LAM_SMOOTHS = [0.0, 1e-8, 1e-6, 1e-4, 1e-2, 1e-1]
 LAM_RIDGE = 1e-8
@@ -150,6 +157,8 @@ def solve_single_qp(item: dict[str, Any], lam_smooth: float, lam_ridge: float) -
 
 
 def main() -> None:
+    args = parse_args()
+    target_dte = args.target_dte
     OUT.mkdir(exist_ok=True)
     env = execute_state()
     sanos_expiry_inputs = env["sanos_expiry_inputs"]
@@ -157,7 +166,7 @@ def main() -> None:
 
     target_exdate = min(
         (pd.Timestamp(x) for x in sanos_expiry_inputs),
-        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - TARGET_DTE),
+        key=lambda x: abs(int(sanos_expiry_inputs[x]["dte"]) - target_dte),
     )
     base_item = sanos_expiry_inputs[target_exdate]
     anchors = dense_full_tail_anchors(base_item["market_k"])
@@ -194,7 +203,7 @@ def main() -> None:
             rows.append(row)
 
     result = pd.DataFrame(rows)
-    result.to_csv(OUT / "74d_dense_qp_sweep_metrics.csv", index=False)
+    result.to_csv(OUT / "expiry_case_dense_qp_sweep_metrics.csv", index=False)
     ok = result[result["success"]].copy()
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), dpi=150, sharex=True)
@@ -215,13 +224,13 @@ def main() -> None:
     for ax in axes.ravel():
         ax.grid(True, alpha=0.25)
         ax.legend(fontsize=8)
-    fig.suptitle("74D Dense-Full-Tail Single-Expiry QP/Ridge Sweep")
+    fig.suptitle("Expiry Case Dense-Full-Tail Single-Expiry QP/Ridge Sweep")
     fig.tight_layout()
-    fig.savefig(OUT / "20_74d_dense_qp_sweep_metrics.png")
+    fig.savefig(OUT / "20_expiry_case_dense_qp_sweep_metrics.png")
     plt.close(fig)
 
     lines = [
-        "# 74D Dense Anchor QP/Ridge Sweep",
+        "# Expiry Case Dense Anchor QP/Ridge Sweep",
         "",
         f"- Target expiry: {target_exdate.date()}",
         f"- DTE: {base_item['dte']}",
@@ -241,8 +250,8 @@ def main() -> None:
             ]
         ].to_markdown(index=False),
     ]
-    (OUT / "74d_dense_qp_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote 74D dense QP diagnostics to {OUT}")
+    (OUT / "expiry_case_dense_qp_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote Expiry Case dense QP diagnostics to {OUT}")
 
 
 if __name__ == "__main__":

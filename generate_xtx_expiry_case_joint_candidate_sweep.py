@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 from pathlib import Path
@@ -13,7 +14,13 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
-TARGET_DTE = 74
+DEFAULT_DTE = 74
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run an expiry-level SANOS/XTX case diagnostic.")
+    parser.add_argument("--target-dte", type=int, default=DEFAULT_DTE, help="Nearest DTE to analyze. Defaults to 74 for the project case study.")
+    return parser.parse_args()
 
 
 def execute_state(stop_cell: int = 56) -> dict[str, Any]:
@@ -50,10 +57,16 @@ def dense_atm_anchors(market_k: np.ndarray) -> np.ndarray:
     return np.unique(np.r_[market_k, atm])
 
 
-def patch_74d_item(env: dict[str, Any], base_joint_inputs: dict[pd.Timestamp, dict[str, Any]], grid: str, eta: float | None) -> dict[pd.Timestamp, dict[str, Any]]:
+def patch_case_item(
+    env: dict[str, Any],
+    base_joint_inputs: dict[pd.Timestamp, dict[str, Any]],
+    grid: str,
+    eta: float | None,
+    target_dte: int,
+) -> dict[pd.Timestamp, dict[str, Any]]:
     build_kernel_matrix = env["build_kernel_matrix"]
     out = {pd.Timestamp(k): copy.copy(v) for k, v in base_joint_inputs.items()}
-    target_exdate = min(out, key=lambda x: abs(int(out[x]["dte"]) - TARGET_DTE))
+    target_exdate = min(out, key=lambda x: abs(int(out[x]["dte"]) - target_dte))
     item = copy.copy(out[target_exdate])
 
     if grid == "baseline":
@@ -89,11 +102,13 @@ def model_metrics(item: dict[str, Any], fit: np.ndarray) -> dict[str, float]:
 
 
 def main() -> None:
+    args = parse_args()
+    target_dte = args.target_dte
     OUT.mkdir(exist_ok=True)
     env = execute_state()
     solve_joint_expiry_lp = env["solve_joint_expiry_lp"]
     base_joint_inputs = env["joint_inputs"]
-    target_exdate = min(base_joint_inputs, key=lambda x: abs(int(base_joint_inputs[x]["dte"]) - TARGET_DTE))
+    target_exdate = min(base_joint_inputs, key=lambda x: abs(int(base_joint_inputs[x]["dte"]) - target_dte))
 
     configs = [
         {"name": "baseline_eta_0_25", "grid": "baseline", "eta": None},
@@ -110,7 +125,7 @@ def main() -> None:
 
     for cfg in configs:
         print(f"solve joint {cfg['name']}")
-        joint_inputs = patch_74d_item(env, base_joint_inputs, cfg["grid"], cfg["eta"])
+        joint_inputs = patch_case_item(env, base_joint_inputs, cfg["grid"], cfg["eta"], target_dte)
         sol = solve_joint_expiry_lp(joint_inputs)
         item = joint_inputs[target_exdate]
         row = {
@@ -121,8 +136,8 @@ def main() -> None:
             "message": sol["message"],
             "n_vars": sol["n_vars"],
             "n_ub": sol["n_ub"],
-            "n_anchor_74d": len(item["anchor_k"]),
-            "smooth_variance_74d": item["smooth_variance"],
+            "n_anchor_expiry_case": len(item["anchor_k"]),
+            "smooth_variance_expiry_case": item["smooth_variance"],
         }
         if sol["success"]:
             per = sol["per_expiry"].copy()
@@ -134,12 +149,12 @@ def main() -> None:
                     "objective": sol["objective"],
                     "median_coverage_all": float(per["bid_ask_coverage"].median()),
                     "worst_coverage_all": float(per["bid_ask_coverage"].min()),
-                    "coverage_74d": float(target_row["bid_ask_coverage"]),
-                    "mid_rmse_74d": float(target_row["mid_rmse"]),
-                    "max_outside_74d": float(target_row["max_outside_bid_ask"]),
-                    "weighted_outside_74d": float(target_row["weighted_outside_error"]),
-                    "nonzero_q_74d": int(target_row["nonzero_q_count"]),
-                    "q_roughness_74d": float(np.linalg.norm(np.diff(q))),
+                    "coverage_expiry_case": float(target_row["bid_ask_coverage"]),
+                    "mid_rmse_expiry_case": float(target_row["mid_rmse"]),
+                    "max_outside_expiry_case": float(target_row["max_outside_bid_ask"]),
+                    "weighted_outside_expiry_case": float(target_row["weighted_outside_error"]),
+                    "nonzero_q_expiry_case": int(target_row["nonzero_q_count"]),
+                    "q_roughness_expiry_case": float(np.linalg.norm(np.diff(q))),
                     "calendar_min": float(sol["calendar_checks"]["min_calendar_diff"].min()),
                     **{f"direct_{k}": v for k, v in model_metrics(item, fit).items()},
                 }
@@ -150,27 +165,27 @@ def main() -> None:
         rows.append(row)
 
     result = pd.DataFrame(rows)
-    result.to_csv(OUT / "74d_joint_candidate_sweep_metrics.csv", index=False)
+    result.to_csv(OUT / "expiry_case_joint_candidate_sweep_metrics.csv", index=False)
 
     ok = result[result["success"]].copy()
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), dpi=150)
     x = np.arange(len(ok))
     labels = ok["config"].to_list()
-    axes[0, 0].bar(x, ok["coverage_74d"])
-    axes[0, 0].set_ylabel("74D coverage")
+    axes[0, 0].bar(x, ok["coverage_expiry_case"])
+    axes[0, 0].set_ylabel("Expiry Case coverage")
     axes[0, 0].set_ylim(0, 1.05)
-    axes[0, 1].bar(x, ok["mid_rmse_74d"], color="#b24c00")
-    axes[0, 1].set_ylabel("74D mid RMSE")
-    axes[1, 0].bar(x, ok["max_outside_74d"], color="#7a3db8")
-    axes[1, 0].set_ylabel("74D max outside")
-    axes[1, 1].bar(x, ok["q_roughness_74d"], color="#2f7f73")
-    axes[1, 1].set_ylabel("74D q roughness")
+    axes[0, 1].bar(x, ok["mid_rmse_expiry_case"], color="#b24c00")
+    axes[0, 1].set_ylabel("Expiry Case mid RMSE")
+    axes[1, 0].bar(x, ok["max_outside_expiry_case"], color="#7a3db8")
+    axes[1, 0].set_ylabel("Expiry Case max outside")
+    axes[1, 1].bar(x, ok["q_roughness_expiry_case"], color="#2f7f73")
+    axes[1, 1].set_ylabel("Expiry Case q roughness")
     for ax in axes.ravel():
         ax.set_xticks(x, labels, rotation=25, ha="right", fontsize=8)
         ax.grid(True, axis="y", alpha=0.25)
-    fig.suptitle("Joint LP Candidate Sweep: 74D Patch Only")
+    fig.suptitle("Joint LP Candidate Sweep: Expiry Case Patch Only")
     fig.tight_layout()
-    fig.savefig(OUT / "18_74d_joint_candidate_sweep_metrics.png")
+    fig.savefig(OUT / "18_expiry_case_joint_candidate_sweep_metrics.png")
     plt.close(fig)
 
     base_item = input_store.get("baseline_eta_0_25") or base_joint_inputs[target_exdate]
@@ -180,23 +195,23 @@ def main() -> None:
     order = qsorted["_order"].to_numpy(dtype=int)
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
-    ax.fill_between(qsorted["k"], qsorted["pure_bid"], qsorted["pure_ask"], color="#b9d7f0", alpha=0.45, label="74D bid/ask")
-    ax.scatter(qsorted["k"], qsorted["pure_mid"], s=18, color="#1f77b4", label="74D market mid", zorder=3)
+    ax.fill_between(qsorted["k"], qsorted["pure_bid"], qsorted["pure_ask"], color="#b9d7f0", alpha=0.45, label="Expiry Case bid/ask")
+    ax.scatter(qsorted["k"], qsorted["pure_mid"], s=18, color="#1f77b4", label="Expiry Case market mid", zorder=3)
     for name in labels:
         fit = fit_store[name][order]
-        cov = float(ok.loc[ok["config"].eq(name), "coverage_74d"].iloc[0])
+        cov = float(ok.loc[ok["config"].eq(name), "coverage_expiry_case"].iloc[0])
         ax.plot(qsorted["k"], fit, linewidth=1.7, label=f"{name}, cov={cov:.2f}")
-    ax.set_title("74D Joint LP Fits Under Candidate Patches")
+    ax.set_title("Expiry Case Joint LP Fits Under Candidate Patches")
     ax.set_xlabel("normalized strike k")
     ax.set_ylabel("pure call price")
     ax.grid(True, alpha=0.25)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(OUT / "19_74d_joint_candidate_fit_curves.png")
+    fig.savefig(OUT / "19_expiry_case_joint_candidate_fit_curves.png")
     plt.close(fig)
 
     lines = [
-        "# 74D Joint Candidate Sweep",
+        "# Expiry Case Joint Candidate Sweep",
         "",
         f"- Target expiry: {target_exdate.date()}",
         f"- DTE: {base_joint_inputs[target_exdate]['dte']}",
@@ -206,21 +221,21 @@ def main() -> None:
                 "config",
                 "grid",
                 "eta",
-                "n_anchor_74d",
-                "coverage_74d",
-                "mid_rmse_74d",
-                "max_outside_74d",
-                "weighted_outside_74d",
+                "n_anchor_expiry_case",
+                "coverage_expiry_case",
+                "mid_rmse_expiry_case",
+                "max_outside_expiry_case",
+                "weighted_outside_expiry_case",
                 "median_coverage_all",
                 "worst_coverage_all",
                 "calendar_min",
-                "nonzero_q_74d",
-                "q_roughness_74d",
+                "nonzero_q_expiry_case",
+                "q_roughness_expiry_case",
             ]
         ].to_markdown(index=False),
     ]
-    (OUT / "74d_joint_candidate_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote 74D joint candidate sweep diagnostics to {OUT}")
+    (OUT / "expiry_case_joint_candidate_sweep_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote Expiry Case joint candidate sweep diagnostics to {OUT}")
 
 
 if __name__ == "__main__":

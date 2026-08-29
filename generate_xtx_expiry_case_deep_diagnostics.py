@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,13 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
-TARGET_DTE = 74
+DEFAULT_DTE = 74
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run an expiry-level SANOS/XTX case diagnostic.")
+    parser.add_argument("--target-dte", type=int, default=DEFAULT_DTE, help="Nearest DTE to analyze. Defaults to 74 for the project case study.")
+    return parser.parse_args()
 
 
 def execute_notebook_state(stop_cell: int = 75) -> dict[str, Any]:
@@ -53,7 +60,7 @@ def add_fit_columns(quotes: pd.DataFrame, name: str, fit: np.ndarray) -> None:
     quotes[f"inside_{name}"] = quotes[f"outside_{name}"] <= 1e-9
 
 
-def save_74d_price_fit(quotes: pd.DataFrame, target_dte: int) -> None:
+def save_case_price_fit(quotes: pd.DataFrame, target_dte: int) -> None:
     title_tail = "Single vs Joint vs QP" if "fit_qp" in quotes.columns else "Single vs Joint"
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
     ax.fill_between(
@@ -75,11 +82,11 @@ def save_74d_price_fit(quotes: pd.DataFrame, target_dte: int) -> None:
     ax.grid(True, alpha=0.25)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(OUT / "08_74d_pure_call_fit.png")
+    fig.savefig(OUT / "08_expiry_case_pure_call_fit.png")
     plt.close(fig)
 
 
-def save_74d_outside(quotes: pd.DataFrame, target_dte: int) -> None:
+def save_case_outside(quotes: pd.DataFrame, target_dte: int) -> None:
     fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
     width = 0.0025
     ax.bar(quotes["k"] - width, quotes["outside_single"], width=width, label="single-expiry LP")
@@ -92,7 +99,7 @@ def save_74d_outside(quotes: pd.DataFrame, target_dte: int) -> None:
     ax.grid(True, axis="y", alpha=0.25)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(OUT / "09_74d_outside_error_by_strike.png")
+    fig.savefig(OUT / "09_expiry_case_outside_error_by_strike.png")
     plt.close(fig)
 
 
@@ -134,13 +141,15 @@ def save_neighbor_calendar(env: dict[str, Any], target_exdate: pd.Timestamp) -> 
         ax.grid(True, alpha=0.25)
         ax.legend()
     axes[-1].set_xlabel("normalized strike k")
-    fig.suptitle("Neighbor Calendar Slack Around 74D")
+    fig.suptitle("Neighbor Calendar Slack Around Expiry Case")
     fig.tight_layout()
-    fig.savefig(OUT / "10_74d_neighbor_calendar_slack.png")
+    fig.savefig(OUT / "10_expiry_case_neighbor_calendar_slack.png")
     plt.close(fig)
 
 
 def main() -> None:
+    args = parse_args()
+    target_dte = args.target_dte
     OUT.mkdir(exist_ok=True)
     env = execute_notebook_state()
 
@@ -151,7 +160,7 @@ def main() -> None:
 
     target_exdate = min(
         (pd.Timestamp(x) for x in joint_inputs),
-        key=lambda x: abs(int(joint_inputs[x]["dte"]) - TARGET_DTE),
+        key=lambda x: abs(int(joint_inputs[x]["dte"]) - target_dte),
     )
     item = joint_inputs[target_exdate]
     quotes = item["quotes"].copy().sort_values("k").reset_index(drop=True)
@@ -205,15 +214,15 @@ def main() -> None:
         "inside_qp",
     ]
     keep_cols = [c for c in keep_cols if c in quotes.columns]
-    quotes[keep_cols].to_csv(OUT / "74d_quote_level_diagnostics.csv", index=False)
-    metrics.to_csv(OUT / "74d_model_metrics.csv", index=False)
+    quotes[keep_cols].to_csv(OUT / "expiry_case_quote_level_diagnostics.csv", index=False)
+    metrics.to_csv(OUT / "expiry_case_model_metrics.csv", index=False)
 
-    save_74d_price_fit(quotes, int(item["dte"]))
-    save_74d_outside(quotes, int(item["dte"]))
+    save_case_price_fit(quotes, int(item["dte"]))
+    save_case_outside(quotes, int(item["dte"]))
     save_neighbor_calendar(env, target_exdate)
 
     lines = [
-        "# 74D Deep Diagnostics",
+        "# Expiry Case Deep Diagnostics",
         "",
         f"- Target expiry: {target_exdate.date()}",
         f"- DTE: {int(item['dte'])}",
@@ -227,8 +236,8 @@ def main() -> None:
         .head(10)[[c for c in ["k", "strike_price", "source_cp_flag", "pure_bid", "pure_mid", "pure_ask", "fit_joint", "outside_joint"] if c in quotes.columns]]
         .to_markdown(index=False),
     ]
-    (OUT / "74d_deep_summary.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote 74D deep diagnostics to {OUT}")
+    (OUT / "expiry_case_deep_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote Expiry Case deep diagnostics to {OUT}")
 
 
 if __name__ == "__main__":
