@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Local/generated research scratch files
+option_surface_step1.executed_test.ipynb
+test_normalized_call.ipynb
+ndx_qqq_same_expiry_iv_compare.ipynb
+
+# Data lives outside this repository.
+*.parquet
+*.feather
+*.h5
+
+# Keep the local paper copy out of public git unless redistribution rights are clear.
+*.pdf
+
+
+# Generated diagnostics can contain market quote levels or derived quote data.
+xtx_diagnostics/
+xtx_*surface*.png
+xtx_*stability*.png
+xtx_calendar_slack_longest_pair.png

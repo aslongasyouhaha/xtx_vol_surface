@@ -1,0 +1,11 @@
+clarabel
+ipython
+jupyter
+matplotlib
+numpy
+pandas
+plotly
+pypdf
+scipy
+tabulate
+
