@@ -14,6 +14,20 @@ ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "option_surface_step1.ipynb"
 OUT = ROOT / "xtx_diagnostics"
 
+def execute_notebook_state(stop_cell: int = 79) -> dict[str, Any]:
+    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    env: dict[str, Any] = {"__name__": "__xtx_diagnostics__", "__file__": str(NOTEBOOK)}
+    for idx, cell in enumerate(nb["cells"]):
+        if idx > stop_cell:
+            break
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if ".show()" in src:
+            continue
+        print(f"execute cell {idx}", flush=True)
+        exec(compile(src, f"{NOTEBOOK.name}:cell{idx}", "exec"), env)
+    return env
 
 def _cell(nb: dict[str, Any], idx: int) -> dict[str, Any]:
     return nb["cells"][idx]
@@ -93,6 +107,8 @@ def save_calendar(calendar: pd.DataFrame) -> None:
 
 
 def save_lp_qp(qcomp: pd.DataFrame) -> None:
+    if qcomp.empty or "dte" not in qcomp.columns:
+        return
     dte = qcomp["dte"].to_numpy()
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), dpi=150, sharex=True)
 
@@ -129,6 +145,8 @@ def save_lp_qp(qcomp: pd.DataFrame) -> None:
 
 
 def save_s33(joint: pd.DataFrame, s33: pd.DataFrame) -> None:
+    if s33.empty or "coverage" not in s33.columns:
+        return
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), dpi=150, sharex=True)
     axes[0].plot(joint["dte"], joint["bid_ask_coverage"], marker="o", label="Joint LP", linewidth=1.8)
     axes[0].plot(s33["dte"], s33["coverage"], marker="o", label="S3.3 forward-product", linewidth=1.8)
@@ -150,16 +168,17 @@ def save_s33(joint: pd.DataFrame, s33: pd.DataFrame) -> None:
     plt.close(fig)
 
 
-def save_surfaces(nb: dict[str, Any]) -> None:
-    for idx, filename, title, zlabel in [
-        (68, "05_pure_call_surface.png", "Fitted SANOS Pure Call Surface", "pure call price"),
-        (70, "06_otm_iv_surface.png", "Fitted SANOS OTM IV Surface", "OTM IV"),
+def save_surfaces(surface_k_grid: np.ndarray, surface_dte: np.ndarray, pure_call_surface: np.ndarray, otm_iv_surface: np.ndarray) -> None:
+    for values, filename, title, zlabel in [
+        (pure_call_surface, "05_pure_call_surface.png", "Fitted SANOS Pure Call Surface", "pure call price"),
+        (np.where(np.isfinite(otm_iv_surface), otm_iv_surface, np.nan), "06_otm_iv_surface.png", "Fitted SANOS OTM IV Surface", "OTM IV"),
     ]:
-        x, y, z = _plotly_surface(nb, idx)
-        xx, yy = np.meshgrid(x, y)
+        if values.size == 0:
+            continue
+        xx, yy = np.meshgrid(surface_k_grid, surface_dte)
         fig = plt.figure(figsize=(11, 7), dpi=150)
         ax = fig.add_subplot(111, projection="3d")
-        surf = ax.plot_surface(xx, yy, z, cmap="viridis", linewidth=0, antialiased=True)
+        surf = ax.plot_surface(xx, yy, values, cmap="viridis", linewidth=0, antialiased=True)
         ax.set_xlabel("normalized strike k")
         ax.set_ylabel("DTE")
         ax.set_zlabel(zlabel)
@@ -171,13 +190,14 @@ def save_surfaces(nb: dict[str, Any]) -> None:
         plt.close(fig)
 
 
-def save_iv_slices(nb: dict[str, Any]) -> None:
-    x, y, z = _plotly_surface(nb, 70)
+def save_iv_slices(surface_k_grid: np.ndarray, surface_dte: np.ndarray, otm_iv_surface: np.ndarray) -> None:
+    if otm_iv_surface.size == 0:
+        return
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
     for dte in [1, 2, 7, 14, 31, 59, 74, 88]:
-        where = np.where(y == dte)[0]
+        where = np.where(surface_dte == dte)[0]
         if len(where):
-            ax.plot(x, z[where[0]], label=f"{dte}D", linewidth=1.8)
+            ax.plot(surface_k_grid, otm_iv_surface[where[0]], label=f"{dte}D", linewidth=1.8)
     ax.set_xlabel("normalized strike k")
     ax.set_ylabel("OTM implied volatility")
     ax.set_title("OTM IV Surface Slices")
@@ -190,8 +210,6 @@ def save_iv_slices(nb: dict[str, Any]) -> None:
 
 def save_summary(joint: pd.DataFrame, calendar: pd.DataFrame, qcomp: pd.DataFrame, s33: pd.DataFrame) -> None:
     worst_joint = joint.sort_values("bid_ask_coverage").head(5)
-    worst_s33 = s33.sort_values("coverage").head(5)
-    rough_drop = 1.0 - qcomp["rough_qp"].median() / qcomp["rough_lp"].median()
     cal_worst = calendar["min_calendar_diff"].min()
 
     lines = [
@@ -204,51 +222,56 @@ def save_summary(joint: pd.DataFrame, calendar: pd.DataFrame, qcomp: pd.DataFram
         f"- Joint LP worst bid/ask coverage: {joint['bid_ask_coverage'].min():.3f}",
         f"- Joint LP max outside bid/ask: {joint['max_outside_bid_ask'].max():.6f}",
         f"- Calendar grid worst min diff: {cal_worst:+.3e}",
-        f"- LP median q roughness: {qcomp['rough_lp'].median():.4f}",
-        f"- QP median q roughness: {qcomp['rough_qp'].median():.4f}",
-        f"- QP roughness drop: {rough_drop:.1%}",
-        f"- S3.3 median bid/ask coverage: {s33['coverage'].median():.3f}",
+    ]
+    if not qcomp.empty and {"rough_lp", "rough_qp"}.issubset(qcomp.columns):
+        rough_drop = 1.0 - qcomp["rough_qp"].median() / qcomp["rough_lp"].median()
+        lines.extend([
+            f"- LP median q roughness: {qcomp['rough_lp'].median():.4f}",
+            f"- QP median q roughness: {qcomp['rough_qp'].median():.4f}",
+            f"- QP roughness drop: {rough_drop:.1%}",
+        ])
+    else:
+        lines.append("- QP comparison: unavailable in this run")
+    if not s33.empty and "coverage" in s33.columns:
+        lines.append(f"- S3.3 median bid/ask coverage: {s33['coverage'].median():.3f}")
+    else:
+        lines.append("- S3.3 comparison: unavailable in this run")
+
+    lines.extend([
         "",
         "## Worst Joint LP Expiries",
         "",
         worst_joint[
             ["exdate", "dte", "n_quotes", "bid_ask_coverage", "max_outside_bid_ask", "mid_rmse", "nonzero_q_count"]
         ].to_markdown(index=False),
-        "",
-        "## Worst S3.3 Expiries",
-        "",
-        worst_s33[["exdate", "dte", "n_quotes", "coverage", "mid_rmse", "dV_med"]].to_markdown(index=False),
+    ])
+    if not s33.empty and "coverage" in s33.columns:
+        worst_s33 = s33.sort_values("coverage").head(5)
+        lines.extend([
+            "",
+            "## Worst S3.3 Expiries",
+            "",
+            worst_s33[["exdate", "dte", "n_quotes", "coverage", "mid_rmse", "dV_med"]].to_markdown(index=False),
+        ])
+    lines.extend([
         "",
         "## Notes",
         "",
         "- The pure call price surface is the primary fitted object.",
         "- The OTM IV surface is a diagnostic transform and is very sensitive in short-dated low-vega wings.",
-        "- The 74D expiry remains the main price-space weak point in the saved notebook outputs.",
-    ]
+        "- The 74D expiry remains the main price-space weak point in the project case study.",
+    ])
     (OUT / "diagnostic_summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
     OUT.mkdir(exist_ok=True)
-    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    env = execute_notebook_state()
 
-    joint = _html_table(nb, 59)
-    calendar = _html_table(nb, 61)
-    qcomp = _html_table(nb, 75)
-    s33 = _html_table(nb, 79)
-
-    for col in joint.columns:
-        if col != "exdate":
-            joint[col] = joint[col].map(_num)
-    for col in calendar.columns:
-        if "date" not in col:
-            calendar[col] = calendar[col].map(_num)
-    for col in qcomp.columns:
-        if col != "exdate":
-            qcomp[col] = qcomp[col].map(_num)
-    for col in s33.columns:
-        if col != "exdate":
-            s33[col] = s33[col].map(_num)
+    joint = env["joint_per_expiry"].copy()
+    calendar = env["joint_calendar_checks"].copy()
+    qcomp = env.get("wing_compare", pd.DataFrame()).copy()
+    s33 = env.get("joint_s33_per_expiry", pd.DataFrame()).copy()
 
     joint.to_csv(OUT / "joint_lp_per_expiry.csv", index=False)
     calendar.to_csv(OUT / "calendar_grid_checks.csv", index=False)
@@ -259,8 +282,17 @@ def main() -> None:
     save_calendar(calendar)
     save_lp_qp(qcomp)
     save_s33(joint, s33)
-    save_surfaces(nb)
-    save_iv_slices(nb)
+    save_surfaces(
+        np.asarray(env["surface_k_grid"], dtype=float),
+        np.asarray(env["surface_dte"], dtype=float),
+        np.asarray(env["pure_call_surface"], dtype=float),
+        np.asarray(env["otm_iv_surface"], dtype=float),
+    )
+    save_iv_slices(
+        np.asarray(env["surface_k_grid"], dtype=float),
+        np.asarray(env["surface_dte"], dtype=float),
+        np.asarray(env["otm_iv_surface"], dtype=float),
+    )
     save_summary(joint, calendar, qcomp, s33)
 
     print(f"Wrote diagnostics to {OUT}")
