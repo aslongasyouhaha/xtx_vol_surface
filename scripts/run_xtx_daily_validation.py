@@ -8,47 +8,18 @@ import _bootstrap  # project paths for direct script execution
 import argparse
 import json
 from pathlib import Path
-import sys
 import time
 import numpy as np
 import pandas as pd
 from threadpoolctl import threadpool_limits
 ROOT=Path(__file__).resolve().parents[1]
-DEPS=ROOT/'data/outputs/native_deps'
-if (DEPS/'highspy').exists():sys.path.insert(0,str(DEPS))
-from xtx_inputs import load_inputs,core_mask
+from xtx_inputs import load_inputs
+from xtx_results import BLOCKS,save_fit
 from sanos_incremental import PersistentSanosLP
 from sanos_daily import snapshot,daily_references,seed_previous_marginals,stability_qp
-from sanos_surface import SanosSurface,audit_surface
-
-BLOCKS={'january':(.25,['2025-01-02','2025-01-03','2025-01-06']),
-        'april':(.1,['2025-04-01','2025-04-02','2025-04-03']),
-        'june':(.25,['2025-06-02','2025-06-03','2025-06-04'])}
 
 
-def save_fit(directory,date,p,x,metadata):
-    directory.mkdir(parents=True,exist_ok=True);arrays={};frames=[]
-    for e,v in p['items'].items():
-        prefix=str(e.date());q=x[slice(*p['q_offsets'][e])]
-        g=v['quotes'].copy();fit=v['G']@q
-        g['fit']=fit;g['outside']=np.maximum(g.pure_bid-fit,0)+np.maximum(fit-g.pure_ask,0)
-        g['inside']=g.outside<=1e-9;g['core']=core_mask(g)
-        g['outside_spreads']=g.outside/(g.pure_ask-g.pure_bid);frames.append(g)
-        arrays[prefix+'__q']=q;arrays[prefix+'__anchors']=v['anchor_k']
-        arrays[prefix+'__smooth_variance']=np.asarray(v['smooth_variance'])
-        arrays[prefix+'__dte']=np.asarray(v['dte']);arrays[prefix+'__T']=np.asarray(v.get('T',v['dte']/365))
-    f=pd.concat(frames,ignore_index=True);core=f[f.core]
-    surface=SanosSurface([float(v.get('T',v['dte']/365)) for v in p['items'].values()],
-        [v['anchor_k'] for v in p['items'].values()],[x[slice(*p['q_offsets'][e])] for e in p['items']],
-        [v['smooth_variance'] for v in p['items'].values()])
-    audit=audit_surface(surface)
-    row=dict(date=date,success=audit['passed'],quotes=len(f),expiries=len(p['items']),
-        coverage=float(f.inside.mean()),core_coverage=float(core.inside.mean()),
-        core_misses=int((~core.inside).sum()),outside_loss=float(f.outside_spreads.sum()),surface_audit=audit,**metadata)
-    f.to_csv(directory/'quotes.csv',index=False);np.savez_compressed(directory/'model.npz',**arrays)
-    (directory/'summary.json').write_text(json.dumps(row,indent=2),encoding='utf8')
-    if not audit['passed']:raise ValueError('Saved fit failed independent surface audit')
-    return row
+
 
 
 def main():
@@ -105,7 +76,7 @@ def main():
                 else:prior_deployed=current_lp
                 prior_lp=current_lp
                 if args.generalized:
-                    from run_xtx_generalized_grid import solve_generalized_grid
+                    from xtx_generalized_research import solve_generalized_grid
                     try:
                         g=solve_generalized_grid(inputs,eta_s=.1,nx=16385);f=g['per_expiry']
                         f.to_csv(day/'generalized_per_expiry.csv',index=False)

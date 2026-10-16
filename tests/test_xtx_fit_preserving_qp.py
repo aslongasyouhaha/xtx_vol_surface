@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 from test_sanos_daily import daily_items
 from sanos_core import build_convex_order_problem,solve_convex_order_lp
-from explore_xtx_fit_preserving_qp import fit_preserving_qp
+from xtx_daily_research import fit_preserving_qp
 
 class FitPreservingQPTests(unittest.TestCase):
     def test_temporal_improvement_cannot_worsen_any_quote(self):

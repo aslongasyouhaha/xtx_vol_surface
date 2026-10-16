@@ -3,17 +3,14 @@ import _bootstrap  # project paths for direct script execution
 import argparse
 import copy
 import json
-import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
 ROOT=Path(__file__).resolve().parents[1]
-DEPS=ROOT/'data/outputs'/'native_deps'
-if (DEPS/'highspy').exists():sys.path.insert(0,str(DEPS))
 from xtx_inputs import load_inputs,core_mask
 from sanos_core import solve_convex_order_lp
-from sanos_incremental import PersistentSanosLP,quote_vectors
+from sanos_incremental import PersistentSanosLP
 
 
 def main():

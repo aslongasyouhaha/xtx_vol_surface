@@ -5,7 +5,7 @@ import numpy as np
 from scipy import sparse
 from sanos_core import call_kernel
 from sanos_martingale_transport import calls
-from run_xtx_transport_chain import fit_chain
+from xtx_transport_research import fit_chain
 
 
 class ChainTests(unittest.TestCase):

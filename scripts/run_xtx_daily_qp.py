@@ -2,16 +2,10 @@
 import _bootstrap  # project paths for direct script execution
 import argparse
 import json
-from pathlib import Path
-import time
-import numpy as np
 import pandas as pd
 from threadpoolctl import threadpool_limits
-from run_xtx_daily_validation import BLOCKS,ROOT,save_fit
-from xtx_inputs import load_inputs
-from sanos_core import build_convex_order_problem
+from xtx_results import BLOCKS,ROOT,save_fit,load_saved_lp
 from sanos_daily import snapshot,daily_references,active_support_qp
-from sanos_incremental import recompute_loss_variables,quote_vectors,validate_frame
 
 
 def main():
@@ -25,17 +19,10 @@ def main():
         for date in dates:
             path=root/block/date/'lp/model.npz'
             if not path.exists():raise ValueError(f'Run daily LP validation first: {date}')
-            p=build_convex_order_problem(load_inputs(date,eta));x=np.zeros(p['cursor'])
-            with np.load(path) as model:
-                for e,v in p['items'].items():
-                    prefix=str(e.date());np.testing.assert_array_equal(v['anchor_k'],model[prefix+'__anchors'])
-                    x[slice(*p['q_offsets'][e])]=model[prefix+'__q']
-            quotes={e:(v['pure_bid'],v['pure_ask']) for e,v in p['items'].items()}
-            recompute_loss_variables(p,x,quotes);upper,cost=quote_vectors(p,quotes)
-            if not validate_frame(p,upper,cost,x,quotes)['validated']:raise ValueError('Stored LP audit failed')
+            p,x,quotes=load_saved_lp(date,block,eta)
             if previous is None:
                 previous=snapshot(date,p,x);continue
-            refs=daily_references(previous,p,date);start=time.perf_counter()
+            refs=daily_references(previous,p,date)
             result=active_support_qp(p,x,quotes,refs,time_limit=20.,loss_allowance=args.loss_allowance)
             metadata=dict(block=block,eta=eta,method='cross_day_active_support_QP',source_date=previous['date'],
                 support_mode=result['support_mode'],full_state_count=result['full_state_count'],

@@ -14,7 +14,7 @@ def main():
     code('''from pathlib import Path
 import sys, json
 ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p/'src/sanos_core.py').exists())
-sys.path[:0] = [str(ROOT/'src'), str(ROOT/'scripts')]
+sys.path[:0] = [str(ROOT/'src')]
 import numpy as np
 import pandas as pd
 get_ipython().run_line_magic('matplotlib', 'inline')
@@ -23,8 +23,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from scipy.stats import norm
 from IPython.display import display, Image
-from diagnose_xtx_wing_turns import otm, iv
-get_ipython().run_line_magic('matplotlib', 'inline')
+from xtx_plotting import otm, iv
 pio.renderers.default='plotly_mimetype+notebook'
 DATE='2025-06-02'
 BLOCK='june'
@@ -78,7 +77,7 @@ fig.tight_layout();plt.show()''')
        '默认选择最短、中间、最长三个有效期限，可修改 `overlay_expiries`。'
        '只使用当前校准样本，因此与历史截图的期限可能不同。'
        '拖动可框选放大，双击恢复；点击图例可隐藏或显示对应期限。')
-    code('''from plot_xtx_calibration_quotes import calibration_iv_figure
+    code('''from xtx_plotting import calibration_iv_figure
 overlay_expiries=[expiries[j] for j in sorted({0,len(expiries)//2,len(expiries)-1})]
 overlay_quotes=quotes[quotes.exdate.isin(overlay_expiries)]
 iv_overlay=calibration_iv_figure(overlay_quotes,model)
@@ -127,7 +126,7 @@ if (wing/'summary.csv').exists():
     display(pd.read_csv(wing/'summary.csv'))
     display(Image(filename=str(wing/'2025-04-03_43D.png')))
 else:
-    print('可选翼部对照尚未生成：python scripts/diagnose_xtx_wing_boundary.py')''')
+    print('可选翼部对照尚未生成：python scripts/research_xtx.py wing-boundary')''')
     md('## 10. 延伸探索：广义模型、QP 与 DLV\n\n'
        '广义模型按同一观察日的到期期限递推；核心优先是可选的两阶段 LP，先保护核心误差，再拟合翼部。'
        '跨日 QP 以先前交易日曲面为参考，研究稳定更新；DLV 研究离散局部波动率参数化及直接校准。'
@@ -145,7 +144,7 @@ if priority_path.exists():
         ax.set_ylabel('Fraction inside bid/ask')
     fig.tight_layout();plt.show()
 else:
-    print('可选目标对照尚未生成：python scripts/explore_xtx_core_priority.py')''')
+    print('可选目标对照尚未生成：python scripts/research_xtx.py core-priority')''')
     nb.cells=cells;nb.metadata.kernelspec=dict(name='python3',display_name='Python 3',language='python')
     target=ROOT/'notebooks/project_overview.ipynb';nbf.write(nb,target);print(target)
 

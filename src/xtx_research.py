@@ -1,4 +1,7 @@
 """Diagnostics on the same input selection and models as the main pipeline."""
+import json
+from pathlib import Path
+from xtx_plotting import otm,iv
 import numpy as np
 import pandas as pd
 from sanos_core import solve_convex_order_lp
@@ -69,3 +72,98 @@ def generalized_accuracy(grids=(4097,16385),*,steps=3):
                 mean_error=float(abs(model.weights@model.states-1)),calendar_min=float(np.min(prices-previous))))
             previous=prices
     return rows
+
+
+def shape(p,x,e):
+    v=p['items'][e];k=np.linspace(v['market_k'].min(),v['market_k'].max(),1501)
+    q=x[slice(*p['q_offsets'][e])];T=v.get('T',v['dte']/365)
+    sigma=iv(k,otm(k,v['anchor_k'],v['smooth_variance'],q),T)
+    idx=np.flatnonzero(k<min(1,k[300]));left=sigma[idx]
+    return k,sigma,dict(left_edge_iv=float(left[0]),left_peak_iv=float(np.nanmax(left)),
+        left_turn_amplitude=float(np.nanmax(left)-left[0]),
+        left_peak_k=float(k[idx[np.nanargmax(left)]]),anchor_min=float(v['anchor_k'].min()))
+
+
+def run_wing_scan(output,baseline_dir):
+    import matplotlib.pyplot as plt
+    from xtx_plotting import otm,iv
+    output=Path(output)
+    output.mkdir(parents=True,exist_ok=True);rows=[]
+    for path in sorted(Path(baseline_dir).glob('*/*/lp/model.npz')):
+        date=path.parents[1].name;quotes=pd.read_csv(path.parent/'quotes.csv')
+        with np.load(path) as model:
+            expiries=sorted(quotes.exdate.unique());fig,axs=plt.subplots(int(np.ceil(len(expiries)/3)),3,figsize=(15,3.2*np.ceil(len(expiries)/3)),squeeze=False)
+            for ax,e in zip(axs.flat,expiries):
+                f=quotes[quotes.exdate==e].sort_values('k');a=model[e+'__anchors'];q=model[e+'__q'];w=float(model[e+'__smooth_variance']);T=float(model[e+'__T'])
+                k=np.linspace(f.k.min(),f.k.max(),501);v=iv(k,otm(k,a,w,q),T);slope=np.gradient(v,k)
+                ax.plot(k,v,color='red',lw=1,label='LP');ax.scatter(f.k,f.source_otm_iv,s=4,color='black',label='filtered market')
+                ax.scatter(f.loc[f.core,'k'],f.loc[f.core,'source_otm_iv'],s=6,color='blue',label='core')
+                ax.set_title(f'{date} {int(model[e+"__dte"])}D');ax.grid(alpha=.2)
+                for side,mask,sign in [('left',k<min(1,k[100]),1),('right',k>max(1,k[-101]),-1)]:
+                    reversal=mask&np.isfinite(v)&(sign*slope>.01)
+                    if side=='right':
+                        # A negative equity skew alone is not a right-wing downturn.
+                        risen=np.maximum.accumulate(np.where(k>1,slope,-np.inf))>.01
+                        reversal &= risen
+                    else:
+                        falling_later=np.maximum.accumulate(np.where(k<1,-slope,-np.inf)[::-1])[::-1]>.01
+                        reversal &= falling_later
+                    # Report slope-direction reversals, not a universal smile requirement.
+                    idx=np.flatnonzero(reversal);n=len(idx)
+                    corelo=f.loc[f.core,'k'].min();corehi=f.loc[f.core,'k'].max()
+                    rows.append(dict(date=date,expiry=e,dte=int(model[e+'__dte']),side=side,turn=n>=3,
+                        reversed_grid_points=n,first_k=k[idx[0]] if n else None,last_k=k[idx[-1]] if n else None,
+                        overlaps_core=bool(n and np.any((k[idx]>=corelo)&(k[idx]<=corehi))),
+                        anchor_min=a.min(),anchor_max=a.max(),smooth_iv=np.sqrt(w/T),
+                        q_min=q.min(),edge_iv=v[0 if side=='left' else -1]))
+            for ax in list(axs.flat)[len(expiries):]:ax.set_visible(False)
+            axs.flat[0].legend(fontsize=7);fig.tight_layout();fig.savefig(output/f'{date}.png',dpi=120);plt.close(fig)
+    frame=pd.DataFrame(rows);frame.to_csv(output/'turns.csv',index=False)
+    summary=frame.groupby('side').agg(slices=('turn','size'),turns=('turn','sum'),core_overlap=('overlaps_core','sum'))
+    print(summary.to_string());print(frame[frame.turn].groupby(['date','side']).size().to_string())
+    (output/'summary.json').write_text(json.dumps(summary.to_dict(),indent=2),encoding='utf8')
+
+
+def run_wing_boundary(output):
+    import matplotlib.pyplot as plt
+    import json
+    from pathlib import Path
+    from xtx_results import save_fit,load_saved_lp
+    from sanos_incremental import PersistentSanosLP
+    output=Path(output)
+    output.mkdir(parents=True,exist_ok=True);rows=[]
+    for date,block,eta,dtes in [('2025-01-02','january',.25,[88]),('2025-04-03','april',.1,[43,88])]:
+        p,x,_=load_saved_lp(date,block,eta)
+        variants=[('saved_baseline',p,x)]
+        for name,left in [('add_state_020',.2)]:
+            changed={e:dict(v,anchor_k=np.unique(np.r_[left,v['anchor_k']])) for e,v in p['items'].items()}
+            session=PersistentSanosLP(changed,time_limit=45);r=session.solve()
+            if not r['success']:
+                rows.append(dict(date=date,variant=name,success=False,message=r['message']))
+                print(json.dumps(rows[-1]),flush=True);continue
+            report=save_fit(output/date/name,date,session.problem,r['x'],dict(eta=eta,variant=name))
+            variants.append((name,session.problem,r['x']))
+            print(json.dumps(dict(date=date,variant=name,coverage=report['coverage'],core_coverage=report['core_coverage'])),flush=True)
+        for dte in dtes:
+            e=next(e for e,v in p['items'].items() if v['dte']==dte);g=p['items'][e]['quotes']
+            fig,axs=plt.subplots(1,2,figsize=(12,4))
+            axs[0].scatter(g.k,g.source_otm_iv,s=8,c='black',label='eligible market mid')
+            T=p['items'][e].get('T',dte/365);kq=g.k.to_numpy();intrinsic=np.maximum(1-kq,0)
+            bidiv=iv(kq,g.pure_bid.to_numpy()-intrinsic,T);askiv=iv(kq,g.pure_ask.to_numpy()-intrinsic,T)
+            for ax in axs:ax.fill_between(kq,bidiv,askiv,color='gray',alpha=.25,label='eligible bid/ask')
+            curves={}
+            for name,pp,xx in variants:
+                k,s,stats=shape(pp,xx,e);curves[name]=(k,s)
+                fit=pp['items'][e]['G']@xx[slice(*pp['q_offsets'][e])]
+                outside=np.maximum(g.pure_bid.to_numpy()-fit,0)+np.maximum(fit-g.pure_ask.to_numpy(),0)
+                row=dict(date=date,dte=dte,variant=name,success=True,coverage=float(np.mean(outside<=1e-9)),
+                    core_coverage=float(np.mean(outside[core_mask(g)]<=1e-9)),**stats)
+                rows.append(row)
+                for ax in axs:ax.plot(k,s,label=name)
+            lo=g.k.min();hi=min(1,lo+.2*(g.k.max()-lo));axs[1].set_xlim(lo,hi)
+            for ax in axs:ax.set_xlabel('k');ax.set_ylabel('OTM IV');ax.grid(alpha=.2);ax.legend(fontsize=7)
+            fig.suptitle(f'{date} {dte}D: identical quotes, eta={eta}; only add common left state 0.2')
+            fig.tight_layout();fig.savefig(output/f'{date}_{dte}D.png',dpi=150);plt.close(fig)
+        (output/'results.json').write_text(json.dumps(rows,indent=2),encoding='utf8')
+        pd.DataFrame(rows).to_csv(output/'summary.csv',index=False)
+    print(pd.DataFrame(rows).to_string(index=False),flush=True)

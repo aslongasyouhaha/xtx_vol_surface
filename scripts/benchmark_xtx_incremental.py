@@ -9,16 +9,14 @@ import argparse
 import json
 import struct
 import subprocess
-import sys
 import time
 import numpy as np
 from scipy.optimize import linprog
 
 ROOT=Path(__file__).resolve().parents[1]
 DEPS=ROOT/'data/outputs'/'native_deps'
-if (DEPS/'highspy').exists(): sys.path.insert(0,str(DEPS))
 from sanos_core import build_convex_order_problem
-from sanos_incremental import (PersistentSanosLP,quote_vectors,native_model,validate_frame,prepare_validation,
+from sanos_incremental import (PersistentSanosLP,quote_vectors,validate_frame,prepare_validation,
                                compile_native_model,native_quote_vectors)
 from xtx_inputs import load_inputs,core_mask
 

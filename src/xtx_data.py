@@ -8,8 +8,7 @@ import pandas as pd
 from scipy.stats import norm
 from scipy.optimize import brentq
 from sklearn.isotonic import IsotonicRegression
-from vol_surface_utils import DEFAULT_MAX_DTE, DEFAULT_MIN_DAILY_VOLUME, DEFAULT_MODEL_MAX_GAP
-from sanos_core import build_model_anchor_grid, add_common_boundary_anchors
+from vol_surface_utils import DEFAULT_MAX_DTE, DEFAULT_MIN_DAILY_VOLUME
 
 def bs_call_forward_unit(k, total_variance):
     total_variance = max(float(total_variance), 0.0)
@@ -176,8 +175,6 @@ def build_joint_inputs(sanos_quotes, model_anchor_quotes, eta=.25):
     from sanos_core import build_model_anchor_grid, add_common_boundary_anchors
     JOINT_MAX_EXPIRIES = None
     MODEL_MAX_GAP = DEFAULT_MODEL_MAX_GAP
-    CALENDAR_DENSE_GRID_POINTS = 801
-    CALENDAR_TOL = 1e-07
     ordered_exdates = kernel_summary.sort_values('dte')['exdate']
     joint_exdates = ordered_exdates.tolist() if JOINT_MAX_EXPIRIES is None else ordered_exdates.head(JOINT_MAX_EXPIRIES).tolist()
     joint_inputs = {}
@@ -187,8 +184,6 @@ def build_joint_inputs(sanos_quotes, model_anchor_quotes, eta=.25):
         item['G'] = build_kernel_matrix(item['anchor_k'], item['market_k'], item['smooth_variance'])
         joint_inputs[pd.Timestamp(exdate)] = item
     joint_inputs = add_common_boundary_anchors(joint_inputs)
-    GLOBAL_CALENDAR_K_MIN = min((float(np.min(item['market_k'])) for item in joint_inputs.values()))
-    GLOBAL_CALENDAR_K_MAX = max((float(np.max(item['market_k'])) for item in joint_inputs.values()))
     return joint_inputs
 
 def build_baseline_inputs(trade_date, *, data_path=None, yield_dir=None, min_daily_volume=DEFAULT_MIN_DAILY_VOLUME):

@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 from sanos_core import call_kernel
 from sanos_generalized_grid import GridProduct
-from diagnose_xtx_generalized_april import relaxed_marginal
+from xtx_generalized_research import relaxed_marginal
 
 
 class DiagnosisTests(unittest.TestCase):

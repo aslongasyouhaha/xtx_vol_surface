@@ -13,8 +13,8 @@
 ```text
 data/outputs/                 本地结果、缓存、图表，不纳入 Git
 docs/SUMMARY.md               方法、验证结果与拓展研究总结
-scripts/                      校准、查询、画图和诊断入口
-src/                          SANOS 模型、曲面与拓展模块
+scripts/                      校准、查询、展示和统一研究入口
+src/                          模型、数据处理及可复用的研究函数
 notebooks/project_overview.ipynb  分步骤可视化展示
 tests/                        回归测试
 native/                       C++ 实验
@@ -48,9 +48,11 @@ python -m pytest -q
 | 跨日 QP | `src/sanos_daily.py` |
 | 广义增量 | `src/sanos_generalized.py`、`src/sanos_generalized_grid.py` |
 | 状态依赖转移 | `src/sanos_martingale_transport.py` |
+| 研究实验 | `src/xtx_research.py`、`src/xtx_generalized_research.py`、`src/xtx_daily_research.py`、`src/xtx_transport_research.py` |
+| 共用展示与结果保存 | `src/xtx_plotting.py`、`src/xtx_results.py` |
 
-`scripts/run_*.py` 是运行入口，`diagnose_*.py` 是诊断，`benchmark_*.py` 是性能实验。
-无需依次执行全部脚本。
+`scripts/` 负责命令参数与运行，公共计算逻辑位于 `src/`，测试直接导入公共模块。
+日常使用基础校准、曲面查询和画图入口；诊断及参数对照统一使用 `research_xtx.py`。
 
 ## 数据和输出
 
@@ -88,39 +90,54 @@ python scripts/run_xtx_baseline.py --trade-date 2025-06-02 2025-06-03 2025-06-04
 | 连续交易日验证 | `scripts/run_xtx_daily_validation.py` |
 | 跨日缩减状态 QP | `scripts/run_xtx_daily_qp.py` |
 | 广义增量 | `scripts/run_xtx_generalized_grid.py` |
-| 状态转移 | `scripts/run_xtx_martingale_transport.py`、`scripts/run_xtx_transport_chain.py` |
+| 状态转移 | `scripts/run_xtx_transport.py`，选择 `joint`、`chain` 或 `prefix` |
 | DLV | `scripts/run_xtx_dlv.py`、`scripts/run_xtx_dlv_calibration.py` |
-| 翼部检查 | `scripts/diagnose_xtx_wing_turns.py`、`scripts/diagnose_xtx_wing_boundary.py` |
-| 市场报价日历诊断 | `scripts/generate_xtx_market_calendar_diagnostics.py` |
-| 联合 LP eta 敏感性 | `scripts/generate_xtx_multi_day_eta_regime_study.py` |
-| 广义模型精确参考验证 | `scripts/validate_xtx_generalized.py` |
-| 广义模型核心优先对照 | `scripts/explore_xtx_core_priority.py` |
-| 广义拟合失败归因 | `scripts/diagnose_xtx_fit_failure.py` |
-| 逐报价保护 QP | `scripts/explore_xtx_fit_preserving_qp.py`，由研究脚本调用 |
+| 基础及延伸研究对照 | `scripts/research_xtx.py`，子命令见下表 |
+| 同一论文 LP 的固定几何更新基准 | `scripts/benchmark_xtx_paper_incremental.py` |
+| Python／C++ 冷启动与热更新基准 | `scripts/benchmark_xtx_incremental.py` |
 
 研究程序的参数可通过 `--help` 查看。展示 notebook 默认读取已有9天实验的6月2日结果；
 若只有新校准结果，将首个代码单元的 `MODEL_DIR` 改为对应模型目录。
 `scripts/build_project_overview.py` 可重新生成 notebook 源文件，但会清空其原有输出。
 
 ```powershell
-python scripts/generate_xtx_market_calendar_diagnostics.py --date 2025-06-02
-python scripts/generate_xtx_multi_day_eta_regime_study.py --dates 2025-06-02 --etas 0.1 0.25
-python scripts/validate_xtx_generalized.py
+python scripts/research_xtx.py --help
+python scripts/research_xtx.py calendar --date 2025-06-02
+python scripts/research_xtx.py eta --dates 2025-06-02 --etas 0.1 0.25
+python scripts/research_xtx.py accuracy
 ```
 
 对应输出为 `data/outputs/market_calendar/<日期>/`、`data/outputs/eta_sensitivity/`、
-`data/outputs/generalized_accuracy/`。这些入口共用 `src/xtx_research.py`，不执行 notebook。
+`data/outputs/generalized_accuracy/`。所有实验都使用公共输入与模型，不执行 notebook。
+
+| `research_xtx.py` 子命令 | 内容 |
+| --- | --- |
+| `calendar`、`eta` | 市场报价日历诊断、固定网格的 eta 敏感性 |
+| `wings`、`wing-boundary` | 保存曲面的翼部扫描、共同左尾状态对照 |
+| `surface` | 保存模型的连续插值、重定价及无套利审计 |
+| `accuracy`、`refine-grid` | 精确路径参考、固定参数的细网格重定价 |
+| `core-priority`、`fit-failure` | 核心优先目标对照、广义拟合失败归因 |
+| `increment-flexibility`、`prefix-lookback` | 独立增量字典、相邻期限局部回调 |
+| `daily-qp` | 逐报价保护 QP，可选择变量坐标 |
+
+每个子命令支持 `--help` 和 `--output`，例如 `python scripts/research_xtx.py daily-qp --help`。
+`daily-qp` 使用前日 LP 作隔离对照；`run_xtx_daily_qp.py` 使用先前接受的结果作连续更新。
 
 广义模型默认使用原论文目标；可显式启用核心优先，两阶段求解仍使用 LP。
 以下命令分别运行一个日期、三天目标对照和失败归因。运行探索不更改基础 LP 默认设置。
 
 ```powershell
 python scripts/run_xtx_generalized_grid.py --dates 2025-06-03 --grids 16385 --fit-priority core_first
-python scripts/explore_xtx_core_priority.py
-python scripts/diagnose_xtx_fit_failure.py
+python scripts/research_xtx.py core-priority
+python scripts/research_xtx.py fit-failure
+python scripts/research_xtx.py daily-qp --blocks june --coordinates absolute
+python scripts/run_xtx_transport.py chain --dates 2025-06-02
 ```
 
 核心优先单次运行保存每期限 CSV、模型 NPZ 和 `summary.json`；目标对照保存
 `data/outputs/research_exploration/core_priority/results.csv`、`results.json` 及各日期明细；
 失败归因保存到 `data/outputs/research_exploration/failure_attribution/`。
-`scripts/explore_xtx_*.py` 是延伸实验；其样本结果与限制统一记录在项目总结中。
+逐报价保护 QP 默认保存到 `data/outputs/research_exploration/fit_preserving_qp/`。
+转移实验的 `joint`、`chain`、`prefix` 分别表示联合边际后耦合、逐期限递推、固定广义前缀对照；
+默认输出在 `data/outputs/generalized_grid/` 下对应的 `joint_transport/`、`transport_chain/`、
+`state_dependent_transport/<日期>/`。样本结果与限制统一记录在项目总结中。

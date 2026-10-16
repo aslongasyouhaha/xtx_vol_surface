@@ -1,12 +1,35 @@
-"""Experimental QP constrained not to worsen any current quote's outside error."""
-import _bootstrap
-import time
+"""Fit-preserving daily QP experiments; original-unit guards remain mandatory."""
+import json,time
+from pathlib import Path
 import numpy as np
+import pandas as pd
 from scipy import sparse
 from scipy.special import ndtr
 from sanos_core import build_convex_order_problem
 from sanos_incremental import recompute_loss_variables,quote_vectors,validate_frame
+from sanos_daily import snapshot,daily_references
+from xtx_results import BLOCKS,load_saved_lp,fit_stats
 
+
+def run_fit_preserving(blocks,output,*,time_limit=20.,coordinates='absolute'):
+    """Isolated previous-LP reference controls, with no sequential deployment claim."""
+    output=Path(output);output.mkdir(parents=True,exist_ok=True);rows=[]
+    for block in blocks:
+        eta,dates=BLOCKS[block]
+        for old,date in zip(dates[:-1],dates[1:]):
+            pp,px,_=load_saved_lp(old,block,eta);p,x,quotes=load_saved_lp(date,block,eta)
+            refs=daily_references(snapshot(old,pp,px),p,date)
+            result=fit_preserving_qp(p,x,quotes,refs,time_limit=time_limit,coordinates=coordinates)
+            row=dict(experiment='pointwise_fit_preserving_QP',date=date,source_date=old,
+                reference='previous daily LP; isolated comparison, not sequential QP replay',
+                **{k:v for k,v in result.items() if k not in ['x','audit']})
+            if result['success']:
+                row.update(fit_stats(p,result['x']))
+                np.savez_compressed(output/f'{date}_qp.npz',x=result['x'])
+            rows.append(row)
+            (output/'results.json').write_text(json.dumps(dict(status='provisional',results=rows),indent=2),encoding='utf8')
+            pd.DataFrame([{k:v for k,v in r.items() if k!='surface_audit'} for r in rows]).to_csv(output/'results.csv',index=False)
+            print(json.dumps({k:v for k,v in row.items() if k!='surface_audit'}),flush=True)
 
 def fit_preserving_qp(problem,lp_x,quotes,references,*,time_limit=20,coordinates='absolute'):
     import clarabel

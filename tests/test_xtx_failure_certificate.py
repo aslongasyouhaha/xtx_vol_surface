@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from diagnose_xtx_fit_failure import minimum_reduced_cost,independent_certificate
+from xtx_generalized_research import minimum_reduced_cost,independent_certificate
 
 class Prefix:
     states=np.array([.8,1.2])
