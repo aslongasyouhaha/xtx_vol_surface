@@ -1,11 +1,17 @@
 clarabel
+highspy==1.15.1
 ipython
 jupyter
 matplotlib
 numpy
+osqp
 pandas
+pyarrow
+pytest
 plotly
 pypdf
 scipy
+scikit-learn
 tabulate
+threadpoolctl
 

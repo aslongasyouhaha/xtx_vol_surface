@@ -2,11 +2,7 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 .pytest_cache/
-
-# Local/generated research scratch files
-option_surface_step1.executed_test.ipynb
-test_normalized_call.ipynb
-ndx_qqq_same_expiry_iv_compare.ipynb
+.history-email-backup/
 
 # Data lives outside this repository.
 *.parquet
@@ -18,7 +14,8 @@ ndx_qqq_same_expiry_iv_compare.ipynb
 
 
 # Generated diagnostics can contain market quote levels or derived quote data.
-xtx_diagnostics/
+data/outputs/
+data/raw/
 xtx_*surface*.png
 xtx_*stability*.png
 xtx_calendar_slack_longest_pair.png
