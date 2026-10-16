@@ -6,6 +6,7 @@
 从仓库根目录的 `notebooks/project_overview.ipynb` 开始阅读：它依次可视化标准化、
 筛选后的报价、方差骨架、价格与 IV 拟合、概率密度、多日验证、翼部对照和延伸探索。
 方法和研究结论见 [项目总结](docs/SUMMARY.md)。展示读取已有结果，不会自动重新校准。
+多期限 IV 叠加图和三维曲面可在 VS Code / Jupyter 中交互查看；GitHub 预览不执行交互脚本。
 
 ## 结构
 

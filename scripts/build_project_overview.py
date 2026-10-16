@@ -19,10 +19,13 @@ import numpy as np
 import pandas as pd
 get_ipython().run_line_magic('matplotlib', 'inline')
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.io as pio
 from scipy.stats import norm
 from IPython.display import display, Image
 from diagnose_xtx_wing_turns import otm, iv
 get_ipython().run_line_magic('matplotlib', 'inline')
+pio.renderers.default='plotly_mimetype+notebook'
 DATE='2025-06-02'
 BLOCK='june'
 MODEL_DIR=ROOT/'data/outputs/daily_validation'/BLOCK/DATE/'lp'
@@ -71,6 +74,15 @@ for ax,e in zip(axs.flat,expiries):
     ax.set_title(f'{int(f.dte.iloc[0])}D');ax.set_xlabel('k');ax.grid(alpha=.2)
 for ax in list(axs.flat)[len(expiries):]:ax.set_visible(False)
 fig.tight_layout();plt.show()''')
+    md('### 多期限 IV 叠加对比\n\n将市场报价点与拟合线放在同一坐标中，方便比较不同期限。'
+       '默认选择最短、中间、最长三个有效期限，可修改 `overlay_expiries`。'
+       '只使用当前校准样本，因此与历史截图的期限可能不同。'
+       '拖动可框选放大，双击恢复；点击图例可隐藏或显示对应期限。')
+    code('''from plot_xtx_calibration_quotes import calibration_iv_figure
+overlay_expiries=[expiries[j] for j in sorted({0,len(expiries)//2,len(expiries)-1})]
+overlay_quotes=quotes[quotes.exdate.isin(overlay_expiries)]
+iv_overlay=calibration_iv_figure(overlay_quotes,model)
+iv_overlay.show(config={'responsive':True,'displaylogo':False})''')
     md('## 6. 混合权重与平滑后的密度\n\n节点权重 q 不是最终连续密度。对数正态核把离散状态平滑成连续分布。'
        '下图限制在观察执行价范围；尾部没有展示完全。')
     code('''e=EXPIRY;a=model[e+'__anchors'];q=model[e+'__q'];w=float(model[e+'__smooth_variance'])
@@ -82,7 +94,8 @@ axs[0].stem(a,q,markerfmt=' ');axs[0].set(title='Latent state weights',xlabel='s
 axs[1].plot(k,density);axs[1].set(title='Smoothed density within quote range',xlabel='k');plt.show()
 print('mass:',q.sum(),'mean:',a@q,'minimum q:',q.min())''')
     md('## 7. 连续价格曲面\n\n在最短与最长期限之间插值，不做时间外推。'
-       '下图只取所有有效期限共同的执行价范围；连续查询不是新的市场观察。')
+       '下图只取所有有效期限共同的执行价范围；连续查询不是新的市场观察。'
+       '按住鼠标左键拖动可旋转，滚轮缩放；三维图在 VS Code / Jupyter 中可交互，GitHub 预览不执行交互脚本。')
     code('''from sanos_surface import SanosSurface
 surface=SanosSurface.from_directory(MODEL_DIR)
 support=quotes.groupby('exdate').k.agg(['min','max'])
@@ -90,9 +103,14 @@ kg=np.linspace(support['min'].max(),support['max'].min(),65)
 days=np.linspace(quotes.dte.min(),quotes.dte.max(),35)
 kk,dd=np.meshgrid(kg,days)
 prices=surface.pure_call_days(dd,kk)
-fig=plt.figure(figsize=(10,5));ax=fig.add_subplot(111,projection='3d')
-ax.plot_surface(kk,dd,prices,cmap='viridis',linewidth=0)
-ax.set(xlabel='k',ylabel='DTE',zlabel='Normalized call',title='Continuous fitted price surface');plt.show()''')
+price_surface=go.Figure(go.Surface(x=kk,y=dd,z=prices,colorscale='Viridis',
+    colorbar=dict(title='Call price'),
+    hovertemplate='k=%{x:.4f}<br>DTE=%{y:.2f}<br>Call=%{z:.6f}<extra></extra>'))
+price_surface.update_layout(title='Continuous fitted price surface',height=600,
+    scene=dict(xaxis_title='k',yaxis_title='DTE',zaxis_title='Normalized call',
+               dragmode='orbit',camera=dict(eye=dict(x=1.5,y=1.5,z=1.1))),
+    margin=dict(l=0,r=0,t=55,b=0))
+price_surface.show(config={'responsive':True,'scrollZoom':True,'displaylogo':False})''')
     md('## 8. 无套利数值审计与多日覆盖率\n\n保存结果包含中间期限、执行价网格的数值审计。'
        '核心定义为 OTM 绝对远期 delta≥0.1，尚非业务批准的报价区域。数值检查和报价覆盖率不等于 Greeks 验收。')
     code('''display(pd.Series(summary['surface_audit']['residuals'],name='violation'))
@@ -128,9 +146,6 @@ if priority_path.exists():
     fig.tight_layout();plt.show()
 else:
     print('可选目标对照尚未生成：python scripts/explore_xtx_core_priority.py')''')
-    md('## 11. 当前结论与后续研究\n\n基础 LP 的9天验证已跑通；3处翼部问题已有状态边界对照。'
-       '跨日 QP 是稳定更新拓展，广义增量和状态转移仍是研究成果。'
-       '尚需统一报价区域、Greeks 和盘中验证；不把收盘拟合通过等同于生产完成。')
     nb.cells=cells;nb.metadata.kernelspec=dict(name='python3',display_name='Python 3',language='python')
     target=ROOT/'notebooks/project_overview.ipynb';nbf.write(nb,target);print(target)
 
