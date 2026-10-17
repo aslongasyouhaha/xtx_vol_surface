@@ -8,11 +8,14 @@
 方法和研究结论见 [项目总结](docs/SUMMARY.md)。展示读取已有结果，不会自动重新校准。
 多期限 IV 叠加图和三维曲面可在 VS Code / Jupyter 中交互查看；GitHub 预览不执行交互脚本。
 
+参考论文：[SANOS（PDF）](docs/SANOS.pdf) · [arXiv:2601.11209v2](https://arxiv.org/abs/2601.11209v2)。
+
 ## 结构
 
 ```text
 data/outputs/                 本地结果、缓存、图表，不纳入 Git
 docs/SUMMARY.md               方法、验证结果与拓展研究总结
+docs/SANOS.pdf                SANOS 参考论文（arXiv v2）
 scripts/                      校准、查询、展示和统一研究入口
 src/                          模型、数据处理及可复用的研究函数
 notebooks/project_overview.ipynb  分步骤可视化展示
