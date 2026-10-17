@@ -11,6 +11,41 @@ from sanos_generalized_grid import GridProduct
 from xtx_inputs import core_mask
 
 
+def run_testcases(cases,output,data_dir=None):
+    """Calibrate and audit shipped synthetic fixtures using the maintained LP."""
+    from xtx_inputs import load_testcase
+    output=Path(output);output.mkdir(parents=True,exist_ok=True);reports=[]
+    for case in cases:
+        inputs,config=load_testcase(case,data_dir)
+        solution=solve_convex_order_lp(inputs)
+        if not solution['success']:raise ValueError(solution['message'])
+        surface=SanosSurface.from_solution(solution);audit=audit_surface(surface)
+        destination=output/case;destination.mkdir(parents=True,exist_ok=True)
+        arrays={};frames=[]
+        for expiry,item in solution['inputs'].items():
+            key=str(expiry.date());q=solution['q_by_expiry'][expiry]
+            frame=item['quotes'].copy();fit=solution['fit_by_expiry'][expiry]
+            frame['fit']=fit;frame['outside']=np.maximum(frame.pure_bid-fit,0)+np.maximum(fit-frame.pure_ask,0)
+            frame['inside']=frame.outside<=1e-9;frames.append(frame)
+            arrays[key+'__anchors']=item['anchor_k'];arrays[key+'__q']=q
+            arrays[key+'__smooth_variance']=np.asarray(item['smooth_variance'])
+            arrays[key+'__T']=np.asarray(item['T']);arrays[key+'__dte']=np.asarray(item['dte'])
+        frame=pd.concat(frames,ignore_index=True)
+        loss=float(np.sum(frame.outside/(frame.pure_ask-frame.pure_bid)))
+        full=bool(frame.inside.all());expected=config['expected']
+        passed=bool(audit['passed'] and full==expected['all_quotes_inside'] and loss+1e-6>=expected['minimum_outside_loss'])
+        report=dict(case=case,data_kind='synthetic',success=bool(audit['passed']),testcase_passed=passed,
+            quotes=len(frame),expiries=len(inputs),coverage=float(frame.inside.mean()),
+            outside_loss=loss,fit_target_met=full,surface_audit=audit,expected=expected)
+        frame.to_csv(destination/'quotes.csv',index=False)
+        np.savez_compressed(destination/'model.npz',**arrays)
+        (destination/'summary.json').write_text(json.dumps(report,indent=2),encoding='utf8')
+        reports.append(report);print(json.dumps(report),flush=True)
+    (output/'results.json').write_text(json.dumps(reports,indent=2),encoding='utf8')
+    if not all(r['testcase_passed'] for r in reports):raise ValueError('Synthetic testcase expectation failed')
+    return reports
+
+
 def market_calendar(quotes,*,points=301,tolerance=1e-9):
     """Adjacent-expiry interpolated quote compatibility, not an execution test.
 

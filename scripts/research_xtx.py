@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from threadpoolctl import threadpool_limits
-from xtx_inputs import load_inputs
-from xtx_research import market_calendar,eta_control,generalized_accuracy,run_wing_scan,run_wing_boundary
+from xtx_inputs import load_inputs,TESTCASES
+from xtx_research import market_calendar,eta_control,generalized_accuracy,run_wing_scan,run_wing_boundary,run_testcases
 
 ROOT=Path(__file__).resolve().parents[1]
 OUTPUTS=ROOT/'data/outputs'
@@ -23,6 +23,9 @@ def parser():
         c=commands.add_parser(name,help=help)
         c.add_argument('--output',type=Path,default=OUTPUTS/output)
         return c
+    c=command('testcases','Run public synthetic fixtures without licensed market data','testcases')
+    c.add_argument('--cases',nargs='+',choices=TESTCASES,default=list(TESTCASES))
+    c.add_argument('--data-dir',type=Path,default=ROOT/'data/testcases')
     c=command('calendar','Adjacent-expiry market quote compatibility','market_calendar')
     c.add_argument('--date',default='2025-06-02')
     c=command('eta','Full joint LP on fixed observations and states','eta_sensitivity')
@@ -140,6 +143,7 @@ def refine_grid(args):
 def main():
     matplotlib.use('Agg')
     args=parser().parse_args();args.output.mkdir(parents=True,exist_ok=True)
+    if args.experiment=='testcases':return run_testcases(args.cases,args.output,args.data_dir)
     basic={'calendar':calendar,'eta':eta,'surface':surface,'accuracy':accuracy,'refine-grid':refine_grid}
     if args.experiment in basic:return basic[args.experiment](args)
     if args.experiment=='wings':return run_wing_scan(args.output,args.baseline_dir)
