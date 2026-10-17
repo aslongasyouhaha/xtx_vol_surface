@@ -4,7 +4,7 @@ import numpy as np
 from test_sanos_incremental import highspy
 from test_sanos_core import example_inputs
 from sanos_incremental import PersistentSanosLP
-from sanos_constraint_generation import solve_generated
+from sanos_solver_research import solve_generated
 
 
 @unittest.skipIf(highspy is None,'Requires native HiGHS')
@@ -32,7 +32,7 @@ class GenerationTests(unittest.TestCase):
 
     def test_failed_global_bound_never_accepts_feasible_surface(self):
         s=PersistentSanosLP(example_inputs(),working_set=False)
-        with patch('sanos_constraint_generation.global_lower_bound',return_value={'lower_bound':-1000.}):
+        with patch('sanos_solver_research.global_lower_bound',return_value={'lower_bound':-1000.}):
             result=solve_generated(s)
         self.assertFalse(result['success'])
 

@@ -258,7 +258,7 @@ class PersistentSanosLP:
                            solve_seconds=0.,validation_seconds=0.,request_seconds=time.perf_counter()-started)
                 return out
             if changed:
-                from sanos_working_set import restricted_update
+                from sanos_solver_research import restricted_update
                 local_budget=min(self.working_set_seconds,.2*self.time_limit)
                 local_deadline=min(started+self.time_limit,time.perf_counter()+local_budget)
                 try:

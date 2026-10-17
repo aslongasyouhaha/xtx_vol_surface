@@ -24,7 +24,7 @@ class IncrementalTests(unittest.TestCase):
         self.assertTrue(s.solve()['success'])
         quotes={e:(b.copy()+1e-5,a.copy()+1e-5) for e,(b,a) in s.quotes.items()}
         s.update_quotes(quotes)
-        with patch('sanos_working_set.restricted_update',side_effect=AssertionError('Unexpected local rebuild')):
+        with patch('sanos_solver_research.restricted_update',side_effect=AssertionError('Unexpected local rebuild')):
             r=s.solve()
         self.assertTrue(r['success'])
         self.assertTrue(r['basis_before_run'])

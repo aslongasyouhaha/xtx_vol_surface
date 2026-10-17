@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from sanos_core import call_kernel
-from sanos_generalized_grid import GridProduct
+from sanos_generalized import GridProduct
 from xtx_generalized_research import relaxed_marginal
 
 

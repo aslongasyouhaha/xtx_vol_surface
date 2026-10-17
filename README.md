@@ -17,8 +17,8 @@ data/testcases/               可公开运行的合成报价、参数与预期�
 data/outputs/                 本地结果、缓存、图表，不纳入 Git
 docs/SUMMARY.md               方法、验证结果与拓展研究总结
 docs/SANOS.pdf                SANOS 参考论文（arXiv v2）
-scripts/                      校准、查询、展示和统一研究入口
-src/                          模型、数据处理及可复用的研究函数
+scripts/                      5个文件：基础校准、查询、研究、notebook 构建、启动辅助
+src/                          16个模块：基础流程、延伸模型及研究实现
 notebooks/project_overview.ipynb  分步骤可视化展示
 tests/                        回归测试
 native/                       C++ 实验
@@ -32,7 +32,7 @@ native/                       C++ 实验
 python -m pip install -r requirements.txt
 python scripts/research_xtx.py testcases
 python scripts/query_xtx_surface.py --model-dir data/outputs/testcases/clean --dte 30 45 60 --k 0.95 1 1.05
-python scripts/plot_xtx_calibration_quotes.py --model-dir data/outputs/testcases/clean --output data/outputs/testcases/clean/iv.html
+python scripts/research_xtx.py plot --model-dir data/outputs/testcases/clean --output data/outputs/testcases/clean/iv.html
 python -m pytest -q
 ```
 
@@ -42,29 +42,39 @@ python -m pytest -q
 ```powershell
 python scripts/run_xtx_baseline.py --trade-date 2025-06-02 --eta 0.25
 python scripts/query_xtx_surface.py --model-dir data/outputs/baseline_paper_gap001/2025-06-02 --dte 7 14 --k 0.95 1 1.03
-python scripts/plot_xtx_calibration_quotes.py --model-dir data/outputs/baseline_paper_gap001/2025-06-02
+python scripts/research_xtx.py plot --model-dir data/outputs/baseline_paper_gap001/2025-06-02
 ```
 
 生成结果统一保存到 `data/outputs/`；新克隆不会自动获得这个被忽略的目录。
 主展示 notebook 读取真实行情的已有结果，仍需自行生成或提供相应本地文件。
 基础入口只运行基础校准，图表只显示参与校准的报价。
-数据准备由 `src/xtx_data.py` 实现，公共结果加载与诊断核心定义位于 `src/xtx_inputs.py`。
+数据准备由 `src/xtx_data.py` 实现，公共输入输出与诊断核心定义位于 `src/xtx_io.py`。
 正式校准不读取或执行 notebook。
 
 | 用途 | 代码 |
 | --- | --- |
 | LP、定价核和凸序 | `src/sanos_core.py` |
-| 数据准备与公共输入 | `src/xtx_data.py`、`src/xtx_inputs.py` |
+| 数据准备与输入输出 | `src/vol_surface_utils.py`、`src/xtx_data.py`、`src/xtx_io.py` |
 | 连续曲面和审计 | `src/sanos_surface.py` |
 | 原生 HiGHS 和热更新 | `src/sanos_incremental.py` |
+| 求解器对照与性能基准 | `src/sanos_solver_research.py`，工作集、活跃列和约束生成集中在此 |
 | 跨日 QP | `src/sanos_daily.py` |
-| 广义增量 | `src/sanos_generalized.py`、`src/sanos_generalized_grid.py` |
+| 广义增量 | `src/sanos_generalized.py`，含精确路径参考和保守网格实现 |
+| DLV 生成、恢复与校准 | `src/sanos_dlv.py` |
 | 状态依赖转移 | `src/sanos_martingale_transport.py` |
 | 研究实验 | `src/xtx_research.py`、`src/xtx_generalized_research.py`、`src/xtx_daily_research.py`、`src/xtx_transport_research.py` |
-| 共用展示与结果保存 | `src/xtx_plotting.py`、`src/xtx_results.py` |
+| 共用展示 | `src/xtx_plotting.py` |
 
 `scripts/` 负责命令参数与运行，公共计算逻辑位于 `src/`，测试直接导入公共模块。
-日常使用基础校准、曲面查询和画图入口；诊断及参数对照统一使用 `research_xtx.py`。
+`scripts/` 只保留以下5个文件，研究功能通过子命令选择：
+
+| 文件 | 用途 |
+| --- | --- |
+| `run_xtx_baseline.py` | 真实行情的基础联合 LP 校准 |
+| `query_xtx_surface.py` | 查询保存曲面的价格 |
+| `research_xtx.py` | 可视化、验证、延伸模型及求解器对照的统一入口 |
+| `build_project_overview.py` | 构建展示 notebook 源文件 |
+| `_bootstrap.py` | 为直接执行脚本配置项目路径与本地依赖 |
 
 ## 数据和输出
 
@@ -139,14 +149,13 @@ python scripts/run_xtx_baseline.py --trade-date 2025-06-02 2025-06-03 2025-06-04
 
 | 用途 | 入口 |
 | --- | --- |
-| 连续交易日验证 | `scripts/run_xtx_daily_validation.py` |
-| 跨日缩减状态 QP | `scripts/run_xtx_daily_qp.py` |
-| 广义增量 | `scripts/run_xtx_generalized_grid.py` |
-| 状态转移 | `scripts/run_xtx_transport.py`，选择 `joint`、`chain` 或 `prefix` |
-| DLV | `scripts/run_xtx_dlv.py`、`scripts/run_xtx_dlv_calibration.py` |
-| 基础及延伸研究对照 | `scripts/research_xtx.py`，子命令见下表 |
-| 同一论文 LP 的固定几何更新基准 | `scripts/benchmark_xtx_paper_incremental.py` |
-| Python／C++ 冷启动与热更新基准 | `scripts/benchmark_xtx_incremental.py` |
+| 连续交易日验证 | `research_xtx.py daily-validation` |
+| 跨日缩减状态 QP | `research_xtx.py daily-update` |
+| 广义增量 | `research_xtx.py generalized` |
+| 状态转移 | `research_xtx.py transport joint\|chain\|prefix` |
+| DLV | `research_xtx.py dlv-recovery`、`dlv-calibrate` |
+| 同一论文 LP 的固定几何更新基准 | `research_xtx.py benchmark --mode paper` |
+| Python／C++ 冷启动与热更新基准 | `research_xtx.py benchmark --mode language` |
 
 研究程序的参数可通过 `--help` 查看。展示 notebook 默认读取已有9天实验的6月2日结果；
 若只有新校准结果，将首个代码单元的 `MODEL_DIR` 改为对应模型目录。
@@ -164,6 +173,11 @@ python scripts/research_xtx.py accuracy
 
 | `research_xtx.py` 子命令 | 内容 |
 | --- | --- |
+| `plot` | 参与校准的报价与拟合 IV 交互图，`--output` 指定 HTML 文件 |
+| `generalized`、`transport` | 广义独立增量、三种状态转移对照 |
+| `dlv-recovery`、`dlv-calibrate` | DLV 生成恢复检查、非线性校准 |
+| `daily-validation`、`daily-update` | 连续交易日验证、以前一接受结果为参考的 QP 更新 |
+| `benchmark` | 固定几何上的更新基准，选择 `--mode paper` 或 `language` |
 | `testcases` | 无需真实行情的三个公开合成案例 |
 | `calendar`、`eta` | 市场报价日历诊断、固定网格的 eta 敏感性 |
 | `wings`、`wing-boundary` | 保存曲面的翼部扫描、共同左尾状态对照 |
@@ -174,17 +188,24 @@ python scripts/research_xtx.py accuracy
 | `daily-qp` | 逐报价保护 QP，可选择变量坐标 |
 
 每个子命令支持 `--help` 和 `--output`，例如 `python scripts/research_xtx.py daily-qp --help`。
-`daily-qp` 使用前日 LP 作隔离对照；`run_xtx_daily_qp.py` 使用先前接受的结果作连续更新。
+`daily-qp` 使用前日 LP 作隔离对照；`daily-update` 使用先前接受的结果作连续更新。
+`daily-update --baseline-dir` 指定已有的连续日期 LP 结果根目录，`--output` 可另存更新结果。
+`dlv-recovery --synthetic-only` 可在没有真实行情的情况下检查生成与恢复。
+
+求解器对照代码集中维护，基础 LP 仍使用已有默认求解流程。`benchmark --mode paper`
+使用当前论文目标；`--mode language` 保留仅区间外损失的受控 Python／C++ 对照，
+需要先通过 `native/build.ps1` 构建本地程序。两种基准的目标不同，速度结果分别解释。
 
 广义模型默认使用原论文目标；可显式启用核心优先，两阶段求解仍使用 LP。
 以下命令分别运行一个日期、三天目标对照和失败归因。运行探索不更改基础 LP 默认设置。
 
 ```powershell
-python scripts/run_xtx_generalized_grid.py --dates 2025-06-03 --grids 16385 --fit-priority core_first
+python scripts/research_xtx.py generalized --dates 2025-06-03 --grids 16385 --fit-priority core_first
 python scripts/research_xtx.py core-priority
 python scripts/research_xtx.py fit-failure
 python scripts/research_xtx.py daily-qp --blocks june --coordinates absolute
-python scripts/run_xtx_transport.py chain --dates 2025-06-02
+python scripts/research_xtx.py transport chain --dates 2025-06-02
+python scripts/research_xtx.py dlv-recovery --synthetic-only
 ```
 
 核心优先单次运行保存每期限 CSV、模型 NPZ 和 `summary.json`；目标对照保存

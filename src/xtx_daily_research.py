@@ -1,15 +1,16 @@
 """Fit-preserving daily QP experiments; original-unit guards remain mandatory."""
-import json,time
-from pathlib import Path
+
+import json
+import time
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from scipy import sparse
 from scipy.special import ndtr
 from sanos_core import build_convex_order_problem
-from sanos_incremental import recompute_loss_variables,quote_vectors,validate_frame
-from sanos_daily import snapshot,daily_references
-from xtx_results import BLOCKS,load_saved_lp,fit_stats
-
+from sanos_incremental import recompute_loss_variables, quote_vectors, validate_frame, PersistentSanosLP
+from sanos_daily import snapshot, daily_references, seed_previous_marginals, stability_qp, active_support_qp
+from xtx_io import BLOCKS, load_saved_lp, fit_stats, load_inputs, save_fit
 
 def run_fit_preserving(blocks,output,*,time_limit=20.,coordinates='absolute'):
     """Isolated previous-LP reference controls, with no sequential deployment claim."""
@@ -30,6 +31,7 @@ def run_fit_preserving(blocks,output,*,time_limit=20.,coordinates='absolute'):
             (output/'results.json').write_text(json.dumps(dict(status='provisional',results=rows),indent=2),encoding='utf8')
             pd.DataFrame([{k:v for k,v in r.items() if k!='surface_audit'} for r in rows]).to_csv(output/'results.csv',index=False)
             print(json.dumps({k:v for k,v in row.items() if k!='surface_audit'}),flush=True)
+
 
 def fit_preserving_qp(problem,lp_x,quotes,references,*,time_limit=20,coordinates='absolute'):
     import clarabel
@@ -135,3 +137,101 @@ def fit_preserving_qp(problem,lp_x,quotes,references,*,time_limit=20,coordinates
         relative_reference_improvement=(initial_rms-final_rms)/initial_rms if initial_rms else 0.,
         max_quote_error_increase=float(np.max(outside(base+alpha*(fits-base))-base_error)),
         selected_point_is_optimizer_result=alpha==1,allowed_states=nq)
+
+
+def run_daily_validation(args):
+    args.output.mkdir(parents=True,exist_ok=True);rows=[]
+    for block in args.blocks:
+        eta,dates=BLOCKS[block];prior_lp=None;prior_deployed=None
+        for j,date in enumerate(dates):
+            start=time.perf_counter();print(f'BUILD {block} {date} eta={eta}',flush=True)
+            try:
+                inputs=load_inputs(date,eta);session=PersistentSanosLP(inputs,time_limit=45)
+                seed=seed_previous_marginals(session,prior_lp,date) if prior_lp else dict(expiries_seeded=0,old_basis_reused=False)
+                result=session.solve()
+                if not result['success']:raise ValueError(result['message'])
+                p=session.problem;x=result['x'];day=args.output/block/date
+                lpmeta=dict(block=block,eta=eta,method='paper_lp',data_timing='end_of_day',
+                    source_date=prior_lp['date'] if prior_lp else None,seed=seed,
+                    solve_seconds=result['request_seconds'],max_constraint_violation=result['max_constraint_violation'])
+                if j==1:
+                    cold=PersistentSanosLP(inputs,time_limit=45);check=cold.solve()
+                    lpmeta['cold_control_success']=check['success']
+                    if check['success']:
+                        lpmeta['warm_cold_objective_difference']=abs(result['actual_objective']-check['actual_objective'])
+                        lpmeta['warm_cold_agrees_1e6']=lpmeta['warm_cold_objective_difference']<=1e-6
+                        if check['actual_objective']<result['actual_objective']:
+                            p=cold.problem;x=check['x'];session=cold;result=check
+                            lpmeta['selected_lower_loss_cold_candidate']=True
+                lprow=save_fit(day/'lp',date,p,x,lpmeta);rows.append(lprow)
+                current_lp=snapshot(date,p,x)
+                if prior_deployed:
+                    refs=daily_references(prior_deployed,p,date)
+                    refsave={}
+                    for e,(target,mask) in refs.items():
+                        refsave[str(e.date())+'__target']=target;refsave[str(e.date())+'__mask']=mask
+                    np.savez_compressed(day/'prior_references.npz',source_date=prior_deployed['date'],**refsave)
+                    qp=stability_qp(p,x,session.quotes,refs,time_limit=args.qp_seconds)
+                    qpmeta=dict(block=block,eta=eta,method='daily_stability_qp',source_date=prior_deployed['date'],
+                        accepted=qp['success'],attempts=qp['attempts'],seconds=qp.get('seconds'),
+                        reference_rule='same expiry, same forward moneyness, prior annualized IV rolled to current remaining time')
+                    if qp['success']:
+                        qpmeta.update(reference_quotes=qp['reference_quotes'],lp_reference_rms_spreads=qp['lp_movement_rms'],
+                            qp_reference_rms_spreads=qp['qp_movement_rms'],loss_allowance=qp['loss_allowance'],
+                            lp_outside_loss=qp['lp_outside_loss'])
+                        qprow=save_fit(day/'qp',date,p,qp['x'],qpmeta);rows.append(qprow)
+                        prior_deployed=snapshot(date,p,qp['x'])
+                    else:
+                        qpmeta.update(date=date,success=False,reason=qp['reason'],deployed_fallback='current_validated_LP')
+                        (day/'qp_rejected.json').write_text(json.dumps(qpmeta,indent=2),encoding='utf8');rows.append(qpmeta)
+                        prior_deployed=current_lp
+                else:prior_deployed=current_lp
+                prior_lp=current_lp
+                if args.generalized:
+                    from xtx_generalized_research import solve_generalized_grid
+                    try:
+                        g=solve_generalized_grid(inputs,eta_s=.1,nx=16385);f=g['per_expiry']
+                        f.to_csv(day/'generalized_per_expiry.csv',index=False)
+                        rows.append(dict(date=date,block=block,method='generalized_expiry_recursion',
+                            success=True,eta_s=.1,fit_target_met=g['fit_target_met'],
+                            coverage=float(f.n_inside.sum()/f.n_quotes.sum()),core_coverage=float(f.n_core_inside.sum()/f.n_core.sum()),
+                            note='within-date expiry recursion; NOT an across-observation-date martingale'))
+                    except Exception as exc:rows.append(dict(date=date,block=block,method='generalized_expiry_recursion',success=False,error=str(exc)))
+                print(json.dumps(dict(date=date,lp_core=lprow['core_coverage'],lp_all=lprow['coverage'],
+                    recent=[{k:r.get(k) for k in ['method','success','core_coverage','lp_reference_rms_spreads','qp_reference_rms_spreads','reason']} for r in rows[-2:]],
+                    elapsed=time.perf_counter()-start)),flush=True)
+            except Exception as exc:
+                row=dict(date=date,block=block,method='daily_pipeline',success=False,error=f'{type(exc).__name__}: {exc}')
+                rows.append(row);print(json.dumps(row),flush=True)
+            (args.output/'results.json').write_text(json.dumps(rows,indent=2),encoding='utf8')
+            pd.DataFrame([{k:v for k,v in r.items() if k not in {'surface_audit','attempts','seed'}} for r in rows]).to_csv(args.output/'summary.csv',index=False)
+
+
+def run_daily_update(args):
+    root=args.baseline_dir;out=args.output;out.mkdir(parents=True,exist_ok=True);rows=[]
+    for block in args.blocks:
+        eta,dates=BLOCKS[block];previous=None
+        for date in dates:
+            path=root/block/date/'lp/model.npz'
+            if not path.exists():raise ValueError(f'Run daily LP validation first: {date}')
+            p,x,quotes=load_saved_lp(date,block,eta,baseline_dir=root)
+            if previous is None:
+                previous=snapshot(date,p,x);continue
+            refs=daily_references(previous,p,date)
+            result=active_support_qp(p,x,quotes,refs,time_limit=args.time_limit,loss_allowance=args.loss_allowance)
+            metadata=dict(block=block,eta=eta,method='cross_day_active_support_QP',source_date=previous['date'],
+                support_mode=result['support_mode'],full_state_count=result['full_state_count'],
+                allowed_state_count=result['allowed_state_count'],attempts=result['attempts'],seconds=result['seconds'])
+            if result['success']:
+                metadata.update(reference_quotes=result['reference_quotes'],lp_reference_rms_spreads=result['lp_movement_rms'],
+                    qp_reference_rms_spreads=result['qp_movement_rms'],loss_allowance=result['loss_allowance'],
+                    lp_outside_loss=result['lp_outside_loss'],feasible_step_alpha=result['feasible_step_alpha'],
+                    selected_point_is_optimizer_result=result['selected_point_is_optimizer_result'])
+                row=save_fit(out/block/date,date,p,result['x'],metadata)
+                previous=snapshot(date,p,result['x'])
+            else:
+                row=dict(date=date,success=False,reason=result['reason'],deployed_fallback='current_validated_LP',**metadata)
+                previous=snapshot(date,p,x)
+            rows.append(row);(out/'results.json').write_text(json.dumps(rows,indent=2),encoding='utf8')
+            pd.DataFrame([{k:v for k,v in r.items() if k not in {'surface_audit','attempts'}} for r in rows]).to_csv(out/'summary.csv',index=False)
+            print(json.dumps({k:row.get(k) for k in ['date','success','core_coverage','lp_reference_rms_spreads','qp_reference_rms_spreads','reason','allowed_state_count']}),flush=True)

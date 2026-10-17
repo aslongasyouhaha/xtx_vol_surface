@@ -1,6 +1,8 @@
 """Shared OTM prices, IV inversion and calibration figures."""
+
 import numpy as np
 import plotly.graph_objects as go
+import pandas as pd
 from scipy.special import ndtr
 
 def otm(k,a,w,q):
@@ -42,3 +44,12 @@ def calibration_iv_figure(quotes,model):
         margin=dict(l=65,r=30,t=85,b=60),
         meta=dict(calibration_quotes=len(quotes),raw_filtered_out_quotes_shown=0))
     return fig
+
+
+def run_plot(args):
+    quotes=pd.read_csv(args.model_dir/'quotes.csv')
+    with np.load(args.model_dir/'model.npz') as model:
+        fig=calibration_iv_figure(quotes,model)
+    fig.update_layout(meta=dict(model_dir=str(args.model_dir),calibration_quotes=len(quotes),raw_filtered_out_quotes_shown=0))
+    args.output.parent.mkdir(parents=True,exist_ok=True);fig.write_html(args.output,include_plotlyjs=True)
+    print(f'Saved {args.output}; {len(quotes)} calibration observations; no excluded quotes.')

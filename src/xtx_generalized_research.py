@@ -1,19 +1,17 @@
 """Generalized-model calibration, controlled experiments and failure certificates.
 
 These experiments do not modify the paper LP defaults. Certificates apply only
-to their fixed finite-grid prefix and retain their floating-point safeguards.
-"""
-import json,time
-from pathlib import Path
+to their fixed finite-grid prefix and retain their floating-point safeguards."""
+
+import json
+import time
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from scipy.optimize import linprog,brentq
+from scipy.optimize import linprog, brentq
 from sanos_core import call_kernel
-from sanos_generalized_grid import GridProduct
-from xtx_inputs import load_inputs,core_mask
-
-ROOT=Path(__file__).resolve().parents[1]
+from sanos_generalized import GridProduct
+from xtx_io import load_inputs, core_mask
 
 def smile(item):
     pairs=[]
@@ -41,7 +39,7 @@ def solve_generalized_grid(inputs,eta_s=.1,nx=16385,quadrature=128,*,fit_priorit
         else:dv=np.full(len(a),max(it['smooth_variance'],1e-7))
         g=it.get('quotes');core=np.ones(len(it['market_k']),bool)
         if g is not None:
-            from xtx_inputs import core_mask
+            from xtx_io import core_mask
             core=core_mask(g)
         result=model.fit_step(a,dv,it['market_k'],it['pure_bid'],it['pure_ask'],it['pure_mid'],
             priority_mask=core if fit_priority=='core_first' else None,core_loss_tolerance=core_loss_tolerance)
@@ -350,3 +348,32 @@ def increment_cases(record,dates):
                         outside_loss=float(np.sum(err/(v['pure_ask']-v['pure_bid']))),seconds=time.perf_counter()-t,**audit)
                 except Exception as exc:row.update(success=False,error=str(exc),seconds=time.perf_counter()-t)
                 record(row)
+
+
+def run_generalized(args):
+    out=args.output
+    out.mkdir(parents=True,exist_ok=True)
+    summaries=[]
+    for date in args.dates:
+        for nx in args.grids:
+            start=time.perf_counter()
+            try:
+                result=solve_generalized_grid(load_inputs(date,.1),nx=nx,eta_s=args.eta_s,
+                    fit_priority=args.fit_priority,core_loss_tolerance=args.core_loss_tolerance)
+                frame=result['per_expiry'];frame.to_csv(out/f'{date}_{nx}.csv',index=False)
+                arrays={'states':result['states']}
+                for j,e in enumerate(result['exdates']):
+                    arrays[f'q_{j}']=result['q_by_expiry'][e]
+                    arrays[f'density_{j}']=result['density_by_expiry'][e]
+                    arrays[f'increment_{j}']=result['increments_by_expiry'][e]
+                np.savez_compressed(out/f'{date}_{nx}.npz',**arrays)
+                r=dict(date=date,nx=nx,success=True,expiries=len(frame),fit_priority=args.fit_priority,
+                    fit_target_met=result['fit_target_met'],
+                    coverage=float(frame.n_inside.sum()/frame.n_quotes.sum()),
+                    core_coverage=float(frame.n_core_inside.sum()/frame.n_core.sum()),
+                    min_coverage=float(frame.coverage.min()),min_core_coverage=float(frame.core_coverage.min()),
+                    max_mass_error=float(frame.mass_error.max()),max_mean_error=float(frame.mean_error.max()),
+                    max_reprice_error=float(frame.reprice_error.max()),calendar_min=float(frame.calendar_min.min()))
+            except Exception as exc:r=dict(date=date,nx=nx,success=False,fit_priority=args.fit_priority,error=str(exc))
+            r['seconds']=time.perf_counter()-start;summaries.append(r);print(json.dumps(r),flush=True)
+            (out/'summary.json').write_text(json.dumps(summaries,indent=2),encoding='utf8')

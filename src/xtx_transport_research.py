@@ -7,9 +7,8 @@ from scipy import sparse
 from scipy.optimize import linprog
 from sanos_core import build_convex_order_problem,call_kernel
 from sanos_martingale_transport import couple_marginals,fit_state_dependent_transition,calls
-from sanos_generalized_grid import GridProduct
-from xtx_inputs import load_inputs,core_mask
-from xtx_results import BLOCKS
+from sanos_generalized import GridProduct
+from xtx_io import load_inputs,core_mask,BLOCKS
 from xtx_generalized_research import solve_generalized_grid
 
 def strict_joint(inputs):

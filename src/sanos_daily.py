@@ -36,7 +36,7 @@ def snapshot(date,problem,x):
 
 def daily_references(previous,problem,date):
     if pd.Timestamp(previous['date'])>=pd.Timestamp(date):raise ValueError('Reference must be strictly earlier')
-    from xtx_inputs import core_mask
+    from xtx_io import core_mask
     refs={};old=previous['problem'];daystep=(pd.Timestamp(date)-pd.Timestamp(previous['date'])).days
     for e,v in problem['items'].items():
         if e not in old['items']:continue
@@ -77,7 +77,7 @@ def stability_qp(problem,lp_x,quotes,references,*,loss_allowance=1e-4,time_limit
     explicitly reported allowance. Core points fitted by LP remain hard bid/ask
     constraints. Full original-unit audit and these fit guards decide acceptance.
     """
-    from xtx_inputs import core_mask
+    from xtx_io import core_mask
     start=time.perf_counter();p=problem
     qcols=np.concatenate([np.arange(a,b) for a,b in p['q_offsets'].values()]);nq=len(qcols)
     n=sum(len(v['market_k']) for v in p['items'].values())

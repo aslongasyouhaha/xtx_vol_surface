@@ -5,7 +5,7 @@ import numpy as np
 from test_sanos_incremental import highspy
 from test_sanos_core import example_inputs
 from sanos_incremental import PersistentSanosLP, quote_vectors
-from sanos_working_set import mean_one_minimum, global_lower_bound, restricted_update
+from sanos_solver_research import mean_one_minimum, global_lower_bound, restricted_update
 
 
 class BoundTests(unittest.TestCase):
@@ -54,14 +54,14 @@ class WorkingSetTests(unittest.TestCase):
         original=global_lower_bound
         def weak(*args,**kwargs):
             result=original(*args,**kwargs);result['lower_bound']=-1000.;return result
-        with patch('sanos_working_set.global_lower_bound',side_effect=weak):
+        with patch('sanos_solver_research.global_lower_bound',side_effect=weak):
             local=restricted_update(s,s._accepted_x,s._accepted_dual,s._accepted_upper,s._accepted_costs,
                                     deadline=time.perf_counter()+2,max_expiries=2)
         self.assertFalse(local['success'])
 
     def test_failed_certificate_falls_back_to_full_solver(self):
         s=self.seed_update()
-        with patch('sanos_working_set.restricted_update',return_value=dict(success=False,reason='unproven',attempts=[])):
+        with patch('sanos_solver_research.restricted_update',return_value=dict(success=False,reason='unproven',attempts=[])):
             result=s.solve()
         self.assertTrue(result['success']);self.assertTrue(result['validated'])
         self.assertEqual(result['optimization_path'],'full')

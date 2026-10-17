@@ -5,7 +5,7 @@ from test_sanos_incremental import highspy
 from test_sanos_core import example_inputs
 from sanos_core import build_convex_order_problem,solve_convex_order_lp
 from sanos_incremental import PersistentSanosLP,quote_vectors,prepare_validation,compile_native_model,native_quote_vectors
-from sanos_working_set import global_lower_bound
+from sanos_solver_research import global_lower_bound
 
 
 @unittest.skipIf(highspy is None,'Requires native HiGHS')

@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 import numpy as np
 from sanos_dlv import DLVModel
-from sanos_dlv_calibration import DLVCalibrator,calibration_grid
+from sanos_dlv import DLVCalibrator,calibration_grid
 
 
 def synthetic_inputs():

@@ -2,14 +2,14 @@
 import pytest
 from sanos_surface import SanosSurface
 from xtx_research import run_testcases
-import xtx_inputs
+import xtx_io
 
 
-@pytest.mark.parametrize('case',xtx_inputs.TESTCASES)
+@pytest.mark.parametrize('case',xtx_io.TESTCASES)
 def test_public_fixture_needs_no_licensed_data(case,tmp_path,monkeypatch):
     def unavailable(*args,**kwargs):
         raise AssertionError('Public testcases must not read licensed market data')
-    monkeypatch.setattr(xtx_inputs,'build_baseline_inputs',unavailable)
+    monkeypatch.setattr(xtx_io,'build_baseline_inputs',unavailable)
     report=run_testcases([case],tmp_path)[0]
     assert report['testcase_passed'] and report['surface_audit']['passed']
     surface=SanosSurface.from_directory(tmp_path/case)

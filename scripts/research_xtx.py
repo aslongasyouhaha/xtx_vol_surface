@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from threadpoolctl import threadpool_limits
-from xtx_inputs import load_inputs,TESTCASES
+from xtx_io import load_inputs,TESTCASES
 from xtx_research import market_calendar,eta_control,generalized_accuracy,run_wing_scan,run_wing_boundary,run_testcases
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -21,8 +21,52 @@ def parser():
     commands=p.add_subparsers(dest='experiment',required=True)
     def command(name,help,output):
         c=commands.add_parser(name,help=help)
-        c.add_argument('--output',type=Path,default=OUTPUTS/output)
+        c.add_argument('--output',type=Path,default=OUTPUTS/output if output else None)
         return c
+    c=command('plot','Interactive IV comparison of saved calibration observations','calibration_quotes/2025-06-02.html')
+    c.add_argument('--model-dir',type=Path,default=OUTPUTS/'daily_validation/june/2025-06-02/lp')
+    c=command('generalized','Calibrate independent product increments on a conservative grid',None)
+    c.add_argument('--dates',nargs='+',default=DATES)
+    c.add_argument('--grids',nargs='+',type=int,default=[4097,16385])
+    c.add_argument('--fit-priority',choices=['paper','core_first'],default='paper')
+    c.add_argument('--eta-s',type=float,default=.1)
+    c.add_argument('--core-loss-tolerance',type=float,default=1e-5,
+        help='Numerical allowance in TOTAL spread-normalized core outside loss.')
+    c=command('transport','State-dependent martingale transport controls',None)
+    c.add_argument('mode',choices=['joint','chain','prefix'])
+    c.add_argument('--dates',nargs='+')
+    c.add_argument('--eta',type=float,
+        help='Joint: recorded validation eta; chain/prefix: 0.1 unless specified.')
+    c=command('dlv-recovery','Validate DLV generation, recovery and saved LP encoding','dlv_validation')
+    c.add_argument('--dates',nargs='+',default=DATES)
+    c.add_argument('--synthetic-only',action='store_true')
+    c.add_argument('--baseline-dir',type=Path,default=OUTPUTS/'baseline_paper_gap001')
+    c=command('dlv-calibrate','Nonlinear calibration of nonnegative DLV parameters','dlv_calibration')
+    c.add_argument('--dates',nargs='+',default=DATES)
+    c.add_argument('--time-limit',type=float,default=30.)
+    c.add_argument('--max-iterations',type=int,default=1500)
+    c.add_argument('--initialization',choices=['lp_interior','atm'],default='lp_interior')
+    c.add_argument('--seed-loss-allowance',type=float,default=.1)
+    c.add_argument('--central-points',type=int,default=121)
+    c.add_argument('--wing-points',type=int,default=31)
+    c=command('daily-validation','Consecutive observation dates: joint LP and full-state QP controls','daily_validation')
+    c.add_argument('--blocks',nargs='+',choices=['january','april','june'],default=['january','april','june'])
+    c.add_argument('--generalized',action='store_true')
+    c.add_argument('--qp-seconds',type=float,default=12.)
+    c=command('daily-update','Sequential daily QP using previously accepted fits','daily_validation/active_support_qp')
+    c.add_argument('--blocks',nargs='+',choices=['january','april','june'],default=['january','april','june'])
+    c.add_argument('--baseline-dir',type=Path,default=OUTPUTS/'daily_validation')
+    c.add_argument('--loss-allowance',type=float,default=.01)
+    c.add_argument('--time-limit',type=float,default=20.)
+    c=command('benchmark','Fixed-geometry paper LP updates or Python/C++ comparison',None)
+    c.add_argument('--mode',choices=['paper','language'],default='paper')
+    c.add_argument('--dates',nargs='+')
+    c.add_argument('--eta',type=float,default=.25,help='Paper mode smoothing coefficient.')
+    c.add_argument('--time-limit',type=float,default=60.)
+    c.add_argument('--scenario',choices=['broad','sparse'],default='broad',help='Language mode quote updates.')
+    c.add_argument('--skip-scipy',action='store_true')
+    c.add_argument('--cpp-exe',type=Path,default=OUTPUTS/'native_deps/incremental_highs.exe')
+    c.add_argument('--dll',type=Path,default=OUTPUTS/'native_deps/highs-1.15.1/bin/highs.dll')
     c=command('testcases','Run public synthetic fixtures without licensed market data','testcases')
     c.add_argument('--cases',nargs='+',choices=TESTCASES,default=list(TESTCASES))
     c.add_argument('--data-dir',type=Path,default=ROOT/'data/testcases')
@@ -124,7 +168,7 @@ def accuracy(args):
 
 
 def refine_grid(args):
-    from sanos_generalized_grid import GridProduct
+    from sanos_generalized import GridProduct
     rows=[]
     for date in args.dates:
         with np.load(args.model_dir/f'{date}_16385.npz') as saved:
@@ -142,7 +186,47 @@ def refine_grid(args):
 
 def main():
     matplotlib.use('Agg')
-    args=parser().parse_args();args.output.mkdir(parents=True,exist_ok=True)
+    p=parser();args=p.parse_args()
+    if args.experiment=='plot':
+        from xtx_plotting import run_plot
+        return run_plot(args)
+    if args.experiment=='generalized' and args.output is None:
+        args.output=OUTPUTS/('generalized_grid' if args.fit_priority=='paper' else 'generalized_grid_core_first')
+    if args.experiment=='transport':
+        if args.eta is not None and not 0<=args.eta<1:p.error('--eta must be in [0,1)')
+        defaults={'joint':'joint_transport','chain':'transport_chain','prefix':'state_dependent_transport'}
+        args.output=args.output or OUTPUTS/'generalized_grid'/defaults[args.mode]
+        args.dates=args.dates or (['2025-04-01'] if args.mode=='prefix' else DATES)
+    if args.experiment=='benchmark':
+        args.dates=args.dates or (DATES if args.mode=='paper' else ['2025-04-01','2025-06-02'])
+        directory='paper_incremental' if args.mode=='paper' else 'incremental_benchmark'+('_sparse' if args.scenario=='sparse' else '')
+        args.output=args.output or OUTPUTS/directory
+    args.output.mkdir(parents=True,exist_ok=True)
+    if args.experiment=='generalized':
+        from xtx_generalized_research import run_generalized
+        return run_generalized(args)
+    if args.experiment=='transport':
+        from xtx_transport_research import run_joint,run_chain,run_fixed_prefix
+        if args.mode=='joint':return run_joint(args.dates,args.output,eta=args.eta)
+        eta=.1 if args.eta is None else args.eta
+        if args.mode=='chain':return run_chain(args.dates,args.output,eta=eta)
+        for date in args.dates:run_fixed_prefix(date,args.output/date,eta=eta)
+        return
+    if args.experiment=='dlv-recovery':
+        from xtx_research import run_dlv_recovery
+        return run_dlv_recovery(args)
+    if args.experiment=='dlv-calibrate':
+        from xtx_research import run_dlv_calibration
+        return run_dlv_calibration(args)
+    if args.experiment=='daily-validation':
+        from xtx_daily_research import run_daily_validation
+        return run_daily_validation(args)
+    if args.experiment=='daily-update':
+        from xtx_daily_research import run_daily_update
+        return run_daily_update(args)
+    if args.experiment=='benchmark':
+        from sanos_solver_research import run_paper_benchmark,run_language_benchmark
+        return run_paper_benchmark(args) if args.mode=='paper' else run_language_benchmark(args)
     if args.experiment=='testcases':return run_testcases(args.cases,args.output,args.data_dir)
     basic={'calendar':calendar,'eta':eta,'surface':surface,'accuracy':accuracy,'refine-grid':refine_grid}
     if args.experiment in basic:return basic[args.experiment](args)

@@ -5,8 +5,8 @@ import numpy as np
 from test_sanos_incremental import highspy
 from test_sanos_core import example_inputs
 from sanos_incremental import PersistentSanosLP
-from sanos_active_columns import active_state_update,prepare_active_model
-from sanos_working_set import global_lower_bound
+from sanos_solver_research import active_state_update,prepare_active_model
+from sanos_solver_research import global_lower_bound
 
 
 @unittest.skipIf(highspy is None,'Requires native HiGHS')
@@ -40,7 +40,7 @@ class ActiveColumnTests(unittest.TestCase):
         s=self.session()
         def weak(*args,**kwargs):
             c=global_lower_bound(*args,**kwargs);c['lower_bound']-=1000;return c
-        with patch('sanos_active_columns.global_lower_bound',side_effect=weak):
+        with patch('sanos_solver_research.global_lower_bound',side_effect=weak):
             r=active_state_update(s,s._accepted_x,budget=2)
         self.assertFalse(r['success'])
         self.assertEqual(r['reason'],'no_global_certificate')

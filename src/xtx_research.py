@@ -1,19 +1,22 @@
 """Diagnostics on the same input selection and models as the main pipeline."""
+
 import json
-from pathlib import Path
-from xtx_plotting import otm,iv
 import numpy as np
 import pandas as pd
+import time
+import copy
+from pathlib import Path
+from xtx_plotting import otm, iv
 from sanos_core import solve_convex_order_lp
-from sanos_surface import SanosSurface,audit_surface
-from sanos_generalized import ExactProduct
-from sanos_generalized_grid import GridProduct
-from xtx_inputs import core_mask
-
+from sanos_surface import SanosSurface, audit_surface
+from sanos_generalized import ExactProduct, GridProduct
+from xtx_io import core_mask, load_inputs
+from sanos_dlv import DLVModel, DLVTransition, latent_calls, recover_local_volatilities, recovery_diagnostics, embed_common_grid, DLVCalibrator, calibration_grid
+from threadpoolctl import threadpool_limits
 
 def run_testcases(cases,output,data_dir=None):
     """Calibrate and audit shipped synthetic fixtures using the maintained LP."""
-    from xtx_inputs import load_testcase
+    from xtx_io import load_testcase
     output=Path(output);output.mkdir(parents=True,exist_ok=True);reports=[]
     for case in cases:
         inputs,config=load_testcase(case,data_dir)
@@ -163,7 +166,7 @@ def run_wing_boundary(output):
     import matplotlib.pyplot as plt
     import json
     from pathlib import Path
-    from xtx_results import save_fit,load_saved_lp
+    from xtx_io import save_fit,load_saved_lp
     from sanos_incremental import PersistentSanosLP
     output=Path(output)
     output.mkdir(parents=True,exist_ok=True);rows=[]
@@ -202,3 +205,112 @@ def run_wing_boundary(output):
         (output/'results.json').write_text(json.dumps(rows,indent=2),encoding='utf8')
         pd.DataFrame(rows).to_csv(output/'summary.csv',index=False)
     print(pd.DataFrame(rows).to_string(index=False),flush=True)
+
+
+def run_dlv_recovery(args):
+    out=args.output;out.mkdir(parents=True,exist_ok=True)
+    a=np.array([.5,.7,.85,1.,1.15,1.4,1.8]);times=np.array([7,30,60,120])/365.
+    vols=np.array([(.18+.04*j)*(1+.4*(a[1:-1]-1)**2) for j in range(len(times))])
+    started=time.perf_counter();model=DLVModel(a,times,vols,[.0001,.0004,.0008,.0016])
+    elapsed=time.perf_counter()-started;roundtrips=[];previous=model.initial_weights
+    for j,transition in enumerate(model.transitions):
+        current=model.weights[j]
+        sigma=recover_local_volatilities(a,previous,current,transition.dt)
+        rebuilt=DLVTransition(a,sigma,transition.dt).apply(previous)
+        roundtrips.append(dict(transition=j,operator_audit=transition.audit(),
+            maximum_sigma_error=float(np.max(abs(sigma-transition.sigma))),
+            maximum_probability_error=float(np.max(abs(rebuilt-current))),
+            maximum_latent_price_error=float(np.max(abs(latent_calls(a,rebuilt)-latent_calls(a,current))))))
+        previous=current
+    report=dict(generated_seconds=elapsed,roundtrips=roundtrips,
+                max_mass_error=float(np.max(abs(model.weights.sum(axis=1)-1))),
+                max_mean_error=float(np.max(abs(model.weights@a-1))),surface_audit=audit_surface(model.surface()))
+    assert report['surface_audit']['passed'] and all(r['operator_audit']['passed'] for r in roundtrips)
+    assert max(r['maximum_probability_error'] for r in roundtrips)<1e-10
+    np.savez(out/'synthetic_model.npz',anchors=a,times=times,local_volatilities=vols,weights=model.weights)
+    (out/'synthetic_results.json').write_text(json.dumps(report,indent=2),encoding='utf8')
+    print('SYNTHETIC '+json.dumps(report),flush=True)
+    real_rows=[]
+    for date in ([] if args.synthetic_only else args.dates):
+        surface=SanosSurface.from_directory(args.baseline_dir/date)
+        common,weights=embed_common_grid(surface.anchors,surface.weights)
+        initial=np.zeros(len(common));initial[np.flatnonzero(common==1.)[0]]=1.;previous=initial
+        summaries=[]
+        for j,current in enumerate(weights):
+            dt=surface.times[j]-(surface.times[j-1] if j else 0.)
+            diagnostic=recovery_diagnostics(common,previous,current,dt,tolerance=2e-7)
+            row=dict(date=date,dte=float(surface.times[j]*365),common_grid_size=len(common),
+                     negative_probability_count=int((current<0).sum()),
+                     singular_nodes=len(diagnostic['singular_interior_indices']),**diagnostic)
+            # Finite eligibility is necessary; numerical round-trip is still checked.
+            row['recovered']=False
+            if diagnostic['finite_recovery_possible']:
+                try:
+                    sigma=recover_local_volatilities(common,previous,current,dt,tolerance=2e-7)
+                    row.update(recovered=True,max_sigma=float(sigma.max()))
+                except ValueError as error:row['recovery_error']=str(error)
+            real_rows.append(row);summaries.append(dict(dte=row['dte'],negative_weights=row['negative_probability_count'],
+                                                       singular_nodes=row['singular_nodes'],recovered=row['recovered']))
+            previous=current
+        np.savez(out/(date+'_common_grid.npz'),anchors=common,weights=weights,initial=initial)
+        print(json.dumps(dict(date=date,common_grid_size=len(common),transitions=summaries)),flush=True)
+    (out/'lp_encoding_diagnostics.json').write_text(json.dumps(real_rows,indent=2),encoding='utf8')
+    pd.DataFrame([{k:v for k,v in row.items() if k!='singular_interior_indices'} for row in real_rows]).to_csv(out/'lp_encoding_summary.csv',index=False)
+
+
+def run_dlv_calibration(args):
+    args.output.mkdir(parents=True,exist_ok=True);rows=[]
+    with threadpool_limits(limits=1):
+        for date in args.dates:
+            eta=.1 if date=='2025-04-01' else .25
+            inputs=load_inputs(date,eta)
+            grid=calibration_grid(inputs,central_points=args.central_points,wing_points=args.wing_points)
+            c=DLVCalibrator(inputs,grid)
+            print(json.dumps(dict(date=date,event='start',eta=eta,states=len(grid),parameters=int(np.prod(c.shape)))),flush=True)
+            started=time.perf_counter();initial=None;initialization=dict(method='atm')
+            if args.initialization=='lp_interior':
+                try:
+                    initial,initialization=c.interior_lp_initialization(loss_allowance=args.seed_loss_allowance,
+                        time_limit=min(20.,args.time_limit*.6))
+                    initial=c.rescale_parameters(initial)
+                except ValueError as error:
+                    initialization=dict(method='atm_fallback',lp_seed_error=str(error),seconds=time.perf_counter()-started)
+            remaining=max(.001,args.time_limit-(time.perf_counter()-started))
+            result=c.calibrate(time_limit=remaining,max_iterations=args.max_iterations,initial_parameters=initial)
+            calibration_seconds=time.perf_counter()-started
+            out=args.output/date;out.mkdir(parents=True,exist_ok=True)
+            frames=[]
+            for (ex,v),fit in zip(c.items.items(),result['fits']):
+                g=v['quotes'][['exdate','dte','T','k','source_cp_flag','volume','pure_bid','pure_mid','pure_ask','source_otm_iv']].copy()
+                g['fit']=fit;g['outside']=np.maximum(g.pure_bid-fit,0)+np.maximum(fit-g.pure_ask,0)
+                g['outside_spreads']=g.outside/(g.pure_ask-g.pure_bid);g['inside']=g.outside.le(1e-9)
+                g['core']=core_mask(v['quotes']);frames.append(g)
+            quotes=pd.concat(frames,ignore_index=True);quotes.to_csv(out/'quotes.csv',index=False)
+            per=quotes.groupby(['exdate','dte']).agg(n_quotes=('inside','size'),coverage=('inside','mean'),
+                                                   max_outside_spreads=('outside_spreads','max')).reset_index()
+            per.to_csv(out/'per_expiry.csv',index=False)
+            model=result['model']
+            np.savez(out/'model.npz',anchors=model.anchors,times=model.times,smoothing_variances=model.smoothing_variances,
+                     local_volatilities=c.volatilities(result['parameters']),
+                     weights=model.weights,initial_weights=model.initial_weights)
+            control=copy.deepcopy(inputs)
+            for v in control.values():v['anchor_k']=grid.copy()
+            lp=solve_convex_order_lp(control,time_limit=30.)
+            row={k:v for k,v in result.items() if k not in {'model','parameters','fits'}}
+            row.update(initialization=initialization,calibration_seconds=calibration_seconds)
+            row.update(date=date,eta=eta,states=len(grid),parameters=int(np.prod(c.shape)),quotes=len(quotes),
+                       core_quotes=int(quotes.core.sum()),core_coverage=float(quotes.loc[quotes.core,'inside'].mean()),
+                       core_outside_gt_01_spread=int((quotes.core & quotes.outside_spreads.gt(.1)).sum()),
+                       max_local_volatility=float(c.volatilities(result['parameters']).max()),
+                       same_grid_lp_success=lp['success'],same_grid_lp_seconds=lp['solve_seconds'])
+            if lp['success']:
+                inside=total=0
+                for ex,v in lp['inputs'].items():
+                    mask=core_mask(v['quotes']);fit=lp['fit_by_expiry'][ex]
+                    outside=np.maximum(v['pure_bid']-fit,0)+np.maximum(fit-v['pure_ask'],0)
+                    total+=int(mask.sum());inside+=int((outside[mask]<=1e-9).sum())
+                row.update(same_grid_lp_core_coverage=inside/total,same_grid_lp_objective=lp['actual_objective'])
+            (out/'summary.json').write_text(json.dumps(row,indent=2),encoding='utf8')
+            rows.append(row);(args.output/'results.json').write_text(json.dumps(rows,indent=2),encoding='utf8')
+            pd.DataFrame([{k:v for k,v in r.items() if k not in {'attempts','audit','initialization'}} for r in rows]).to_csv(args.output/'summary.csv',index=False)
+            print(json.dumps(row),flush=True)

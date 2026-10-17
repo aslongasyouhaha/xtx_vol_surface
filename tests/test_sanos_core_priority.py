@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from sanos_generalized import ExactProduct
-from sanos_generalized_grid import GridProduct
+from sanos_generalized import GridProduct
 
 class CorePriorityTests(unittest.TestCase):
     def data(self):
